@@ -1,0 +1,185 @@
+{
+    "evStations": [
+      {
+        "id": 1,
+        "name": "EV Station PluZ Charging Station",
+        "address": "53VQ+JWV, That Na Weng, Mueang Sakon Nakhon District, Sakon Nakhon 47000",
+        "lat": 17.27301366119013, 
+        "lng": 104.13151910069509,
+        "phone": "042970600",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CCS-50 kW",
+        "reviews": [
+          {
+            "author_name": "Mongkhon Chaimaha",
+            "rating": 4,
+            "text": "สถานีนี้บริการดีมากๆครับ",
+            "time": "3 days ago"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Electric Vehicle Charging Station",
+        "address": "53QQ+P7V ตำบล ธาตุนาเวง อำเภอเมืองสกลนคร สกลนคร 47000",
+        "lat": 17.189745493223064,
+        "lng": 104.08878904711678,
+        "phone": "042970020",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CCS-50 kW",
+        "reviews": [
+          {
+            "author_name": "Phonsit Kham",
+            "rating": 4,
+            "text": "สถานีนี้สะดวกมากๆ ที่จอดกว้างขวาง",
+            "time": "5 days ago"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "EA Anywhere Charging Station",
+        "address": "54H9+FV6 ROBINSON, อำเภอเมืองสกลนคร สกลนคร 47000",
+        "lat": 17.17901466788704, 
+        "lng": 104.11905916785192,
+        "phone": "042970500",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CHAdeMO-50 kW",
+        "reviews": [
+          {
+            "author_name": "Somchai Kiet",
+            "rating": 5,
+            "text": "เร็วมากๆ สะดวกด้วย",
+            "time": "2 days ago"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "name": "สถานีชาร์จรถยนต์ไฟฟ้า",
+        "address": "54G9+XM6 ตำบล ธาตุนาเวง อำเภอเมืองสกลนคร สกลนคร 47000",
+        "lat": 17.177688591161804,  
+        "lng": 104.12003956018229,
+        "phone": "042970800",
+        "openHours": "Open 8:00 AM - 10:00 PM",
+        "chargingType": "Type 2 AC-22 kW",
+        "reviews": [
+          {
+            "author_name": "Narongchai Sawasdee",
+            "rating": 3,
+            "text": "สถานีนี้โอเค แต่ว่ารอนานนิดนึง",
+            "time": "1 week ago"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "name": "BlueWave EV Charging",
+        "address": "45 BlueWave Rd, Sakon Nakhon 47000",
+        "lat": 17.172665428373456,  
+        "lng": 104.13559100843388,
+        "phone": "042970700",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CCS-150 kW",
+        "reviews": [
+          {
+            "author_name": "Pimchanok Yod",
+            "rating": 4,
+            "text": "ดีมากค่ะ สะดวกสบาย",
+            "time": "2 days ago"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "name": "EcoCharge Station",
+        "address": "256 Eco St, Mueang Sakon Nakhon District, Sakon Nakhon 47000",
+        "lat": 17.192345,
+        "lng": 104.083456,
+        "phone": "042970900",
+        "openHours": "Open 7:00 AM - 9:00 PM",
+        "chargingType": "Type 2 AC-22 kW",
+        "reviews": [
+          {
+            "author_name": "Siriwat Boon",
+            "rating": 5,
+            "text": "ชาร์จได้รวดเร็ว บริการดี",
+            "time": "4 days ago"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "name": "PowerUp EV Station",
+        "address": "321 Power St, Sakon Nakhon 47000",
+        "lat": 17.196789,
+        "lng": 104.091234,
+        "phone": "042971000",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CHAdeMO-50 kW",
+        "reviews": [
+          {
+            "author_name": "Chanchai Boon",
+            "rating": 4,
+            "text": "ที่นี่ชาร์จได้เร็วมาก บริการดี",
+            "time": "1 week ago"
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "name": "SpeedyCharge Station",
+        "address": "789 Speed St, Sakon Nakhon 47000",
+        "lat": 17.198901,
+        "lng": 104.092345,
+        "phone": "042971100",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CCS-100 kW",
+        "reviews": [
+          {
+            "author_name": "Somchai Jinda",
+            "rating": 5,
+            "text": "เร็วและง่าย สถานีดีมาก",
+            "time": "2 days ago"
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "name": "EV Quick Charge",
+        "address": "456 Quick St, Sakon Nakhon 47000",
+        "lat": 17.190123,
+        "lng": 104.087654,
+        "phone": "042971200",
+        "openHours": "Open 6:00 AM - 8:00 PM",
+        "chargingType": "CHAdeMO-100 kW",
+        "reviews": [
+          {
+            "author_name": "Suthep Man",
+            "rating": 4,
+            "text": "เร็วดีครับ แต่คนใช้เยอะ",
+            "time": "3 days ago"
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "name": "SuperCharge EV Station",
+        "address": "100 Super St, Sakon Nakhon 47000",
+        "lat": 17.199876,
+        "lng": 104.094567,
+        "phone": "042971300",
+        "openHours": "Open 24 Hours",
+        "chargingType": "CCS-350 kW",
+        "reviews": [
+          {
+            "author_name": "Chanthip Nontachai",
+            "rating": 5,
+            "text": "สะดวกและรวดเร็วมาก",
+            "time": "2 days ago"
+          }
+        ]
+      }
+    ]
+  }
+  

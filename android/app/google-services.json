@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "673208710258",
+    "project_id": "ev-project-3b86c",
+    "storage_bucket": "ev-project-3b86c.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:673208710258:android:46099260ed5da2d833beeb",
+        "android_client_info": {
+          "package_name": "com.example.evflutterproject"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBy_rnXcVW-bAzjFJHxfOQg08ExKQIa2DU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
