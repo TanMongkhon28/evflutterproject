@@ -146,65 +146,66 @@ void _applyFilter(String? filterType) {
 }
 
 void _showFilterDialog() {
-  _tempSelectedFilter = _selectedFilter; // เก็บค่าที่เลือกก่อนหน้า
+  _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
   showDialog(
     context: context,
     builder: (BuildContext context) {
-      return AlertDialog(
-        title: Text('Filter by Type'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildFilterOption('Show All', 'all.png', 'all'),
-              _buildFilterOption('EV Station', 'ev_station.png', 'ev_station'),
-              _buildFilterOption('Gas Station', 'gas_station.png', 'gas_station'),
-              _buildFilterOption('Cafe', 'cafe.png', 'cafe'),
-              _buildFilterOption('Restaurant', 'restaurant.png', 'restaurant'),
-              _buildFilterOption('Store', 'store.png', 'store'),
-              _buildFilterOption('Tourist Attraction', 'tourist_attraction.png', 'tourist_attraction'),
+      return StatefulBuilder(
+        builder: (context, setState) { // ใช้ StatefulBuilder เพื่ออัปเดตสถานะภายใน dialog
+          return AlertDialog(
+            title: Text('Filter by Type'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildFilterOption(setState, 'Show All', 'all.png', 'all'),
+                  _buildFilterOption(setState, 'EV Station', 'ev_station.png', 'ev_station'),
+                  _buildFilterOption(setState, 'Gas Station', 'gas_station.png', 'gas_station'),
+                  _buildFilterOption(setState, 'Cafe', 'cafe.png', 'cafe'),
+                  _buildFilterOption(setState, 'Restaurant', 'restaurant.png', 'restaurant'),
+                  _buildFilterOption(setState, 'Store', 'store.png', 'store'),
+                  _buildFilterOption(setState, 'Tourist Attraction', 'tourist_attraction.png', 'tourist_attraction'),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _selectedFilter = _tempSelectedFilter; // อัปเดตตัวเลือกจริงเมื่อกด Apply
+                  _applyFilter(_selectedFilter); // ใช้ฟังก์ชันกรองข้อมูล
+                },
+                child: Text('Apply'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop(); // ยกเลิกการเปลี่ยนแปลงเมื่อกด Cancel
+                },
+                child: Text('Cancel'),
+              ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedFilter = _tempSelectedFilter; // อัปเดตตัวเลือกตามที่เลือกใน dialog
-                _applyFilter(_selectedFilter); // เรียกใช้ filter
-              });
-              Navigator.of(context).pop();
-            },
-            child: Text('Apply'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop(); // ปิด dialog โดยไม่เปลี่ยนแปลง
-            },
-            child: Text('Cancel'),
-          ),
-        ],
+          );
+        },
       );
     },
   );
 }
 
-Widget _buildFilterOption(String title, String iconName, String filterType) {
+Widget _buildFilterOption(StateSetter setState, String title, String iconName, String filterType) {
   return CheckboxListTile(
-    value: _tempSelectedFilter == filterType, // ตรวจสอบว่า filter ชั่วคราวที่เลือกตรงกับ filterType หรือไม่
+    value: _tempSelectedFilter == filterType, // ตรวจสอบการเลือกชั่วคราว
     onChanged: (bool? value) {
-      setState(() {
+      setState(() { // อัปเดตสถานะทันทีที่คลิก
         if (value == true) {
-          _tempSelectedFilter = filterType; // อัปเดตตัวแปรชั่วคราวเมื่อเลือก
+          _tempSelectedFilter = filterType; // อัปเดตค่าชั่วคราวเมื่อเลือก
         } else {
-          _tempSelectedFilter = 'all'; // ถ้ายกเลิกการเลือก กลับไปใช้ค่า 'all'
+          _tempSelectedFilter = 'all'; // หากยกเลิก ให้กลับไปเลือกทั้งหมด
         }
       });
-      print('Temp Selected Filter: $_tempSelectedFilter'); // Debug ดูค่าที่เลือกชั่วคราว
     },
     title: Row(
       children: [
-        if (iconName != 'all') 
+        if (iconName != 'all')
           Image.asset('assets/icons/$iconName', width: 24, height: 24),
         SizedBox(width: 8),
         Expanded(
@@ -217,6 +218,8 @@ Widget _buildFilterOption(String title, String iconName, String filterType) {
     ),
   );
 }
+
+
 
 
 
