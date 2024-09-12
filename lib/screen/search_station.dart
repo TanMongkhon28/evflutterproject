@@ -40,6 +40,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? _durationText;
   List<String> _searchHistory = [];
   List<Map<String, dynamic>> _originalPlaces = [];
+  String _selectedFilter = 'all';
 
   Set<gms.Polyline> _polylines = {};
   gms.PolylineId polylineId = gms.PolylineId('route');
@@ -94,17 +95,15 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   // ฟังก์ชันค้นหา
   void _onSearchChanged(String query) {
-    if (query.isEmpty) {
-      _resetSearchResults(); // เรียกฟังก์ชันโหลดข้อมูลกลับ
-      return;
-    }
-
     setState(() {
       _places = _originalPlaces.where((place) {
-        return place['name']
+        final matchType =
+            _selectedFilter == 'all' || place['type'] == _selectedFilter;
+        final matchQuery = place['name']
             .toString()
             .toLowerCase()
             .contains(query.toLowerCase());
+        return matchType && matchQuery;
       }).toList();
     });
   }
@@ -114,7 +113,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     setState(() {
       _searchController.clear();
       _resetSearchResults();
-      _places.clear();
     });
   }
 
@@ -131,6 +129,75 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 //     return user
 //         ?.uid; // คืนค่า userId ของผู้ใช้ปัจจุบัน หรือ null ถ้าไม่มีผู้ใช้ล็อกอิน
 //   }
+
+  void _applyFilter(String filterType) {
+    setState(() {
+      if (filterType == 'all') {
+        // แสดงผลทั้งหมด
+        _places = List.from(_originalPlaces);
+      } else {
+        // กรองตามประเภทที่เลือก
+        _places = _originalPlaces.where((place) {
+          return place['type'].toString().toLowerCase() == filterType;
+        }).toList();
+      }
+    });
+  }
+
+  void _showFilterDialog() {
+    showModalBottomSheet(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            String selectedFilter = 'all'; // ค่าที่เลือก (เริ่มต้นคือ all)
+            final List<String> filterOptions = [
+              'All',
+              'Restaurant',
+              'Cafe',
+              'Store',
+              'Tourist Attraction',
+              'EV Station'
+            ];
+
+            return Container(
+              padding: EdgeInsets.all(16.0),
+              height: 250,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Filter by Type',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 16),
+                  for (String type in filterOptions)
+                    RadioListTile<String>(
+                      title: Text(type),
+                      value: type.toLowerCase(),
+                      groupValue: selectedFilter,
+                      onChanged: (value) {
+                        setState(() {
+                          selectedFilter = value!;
+                        });
+                      },
+                    ),
+                  SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      _applyFilter(selectedFilter);
+                      Navigator.pop(context); // ปิด Bottom Sheet
+                    },
+                    child: Text('Apply Filter'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   Future<void> _loadPlacesFromFirestore() async {
     setState(() {
@@ -1357,6 +1424,15 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                     child: Icon(Icons.add),
                   ),
                 ),
+                Positioned(
+                  top: 80,
+                  right: 16,
+                  child: FloatingActionButton(
+                    onPressed: _showFilterDialog,
+                    child: Icon(Icons.filter_list),
+                  ),
+                ),
+
                 // My Location Button
                 Positioned(
                   bottom: 160,
