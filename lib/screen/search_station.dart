@@ -40,7 +40,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? _durationText;
   List<String> _searchHistory = [];
   List<Map<String, dynamic>> _originalPlaces = [];
-  String _selectedFilter = 'all';
+  String? _selectedFilter = 'all';
+  String? _tempSelectedFilter;
 
   Set<gms.Polyline> _polylines = {};
   gms.PolylineId polylineId = gms.PolylineId('route');
@@ -130,74 +131,96 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 //         ?.uid; // คืนค่า userId ของผู้ใช้ปัจจุบัน หรือ null ถ้าไม่มีผู้ใช้ล็อกอิน
 //   }
 
-  void _applyFilter(String filterType) {
-    setState(() {
-      if (filterType == 'all') {
-        // แสดงผลทั้งหมด
-        _places = List.from(_originalPlaces);
-      } else {
-        // กรองตามประเภทที่เลือก
-        _places = _originalPlaces.where((place) {
-          return place['type'].toString().toLowerCase() == filterType;
-        }).toList();
-      }
-    });
-  }
+void _applyFilter(String? filterType) {
+  setState(() {
+    if (filterType == null || filterType == 'all') {
+      // แสดงผลทั้งหมด
+      _places = List.from(_originalPlaces);
+    } else {
+      // กรองตามประเภทที่เลือก
+      _places = _originalPlaces.where((place) {
+        return place['type'].toString().toLowerCase() == filterType;
+      }).toList();
+    }
+  });
+}
 
-  void _showFilterDialog() {
-    showModalBottomSheet(
-      context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setState) {
-            String selectedFilter = 'all'; // ค่าที่เลือก (เริ่มต้นคือ all)
-            final List<String> filterOptions = [
-              'All',
-              'Restaurant',
-              'Cafe',
-              'Store',
-              'Tourist Attraction',
-              'EV Station'
-            ];
+void _showFilterDialog() {
+  _tempSelectedFilter = _selectedFilter; // เก็บค่าที่เลือกก่อนหน้า
+  showDialog(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: Text('Filter by Type'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildFilterOption('Show All', 'all.png', 'all'),
+              _buildFilterOption('EV Station', 'ev_station.png', 'ev_station'),
+              _buildFilterOption('Gas Station', 'gas_station.png', 'gas_station'),
+              _buildFilterOption('Cafe', 'cafe.png', 'cafe'),
+              _buildFilterOption('Restaurant', 'restaurant.png', 'restaurant'),
+              _buildFilterOption('Store', 'store.png', 'store'),
+              _buildFilterOption('Tourist Attraction', 'tourist_attraction.png', 'tourist_attraction'),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedFilter = _tempSelectedFilter; // อัปเดตตัวเลือกตามที่เลือกใน dialog
+                _applyFilter(_selectedFilter); // เรียกใช้ filter
+              });
+              Navigator.of(context).pop();
+            },
+            child: Text('Apply'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(); // ปิด dialog โดยไม่เปลี่ยนแปลง
+            },
+            child: Text('Cancel'),
+          ),
+        ],
+      );
+    },
+  );
+}
 
-            return Container(
-              padding: EdgeInsets.all(16.0),
-              height: 250,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Filter by Type',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  SizedBox(height: 16),
-                  for (String type in filterOptions)
-                    RadioListTile<String>(
-                      title: Text(type),
-                      value: type.toLowerCase(),
-                      groupValue: selectedFilter,
-                      onChanged: (value) {
-                        setState(() {
-                          selectedFilter = value!;
-                        });
-                      },
-                    ),
-                  SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () {
-                      _applyFilter(selectedFilter);
-                      Navigator.pop(context); // ปิด Bottom Sheet
-                    },
-                    child: Text('Apply Filter'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
+Widget _buildFilterOption(String title, String iconName, String filterType) {
+  return CheckboxListTile(
+    value: _tempSelectedFilter == filterType, // ตรวจสอบว่า filter ชั่วคราวที่เลือกตรงกับ filterType หรือไม่
+    onChanged: (bool? value) {
+      setState(() {
+        if (value == true) {
+          _tempSelectedFilter = filterType; // อัปเดตตัวแปรชั่วคราวเมื่อเลือก
+        } else {
+          _tempSelectedFilter = 'all'; // ถ้ายกเลิกการเลือก กลับไปใช้ค่า 'all'
+        }
+      });
+      print('Temp Selected Filter: $_tempSelectedFilter'); // Debug ดูค่าที่เลือกชั่วคราว
+    },
+    title: Row(
+      children: [
+        if (iconName != 'all') 
+          Image.asset('assets/icons/$iconName', width: 24, height: 24),
+        SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+
+
+
 
   Future<void> _loadPlacesFromFirestore() async {
     setState(() {
@@ -1135,7 +1158,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       'ev_station',
       'restaurant',
       'cafe',
-      'store'
+      'store',
+      'gas_station'
     ];
 
     showDialog(

@@ -102,6 +102,8 @@ class HistoryPage extends StatelessWidget {
         return Icon(Icons.local_cafe, size: 24);
       case 'tourist_attraction':
         return Icon(Icons.camera_alt, size: 24);
+      case 'gas_station':
+        return Icon(Icons.camera_alt, size: 24);
       default:
         return Icon(Icons.place, size: 24);
     }

@@ -485,6 +485,7 @@ void _removeRequestFromUI(DocumentSnapshot request) {
       {'label': 'Cafe', 'value': 'cafe'},
       {'label': 'Store', 'value': 'store'},
       {'label': 'Tourist Attraction', 'value': 'tourist_attraction'},
+      {'label': 'Gas Station', 'value': 'gas_station'}
     ];
 
     showDialog(
