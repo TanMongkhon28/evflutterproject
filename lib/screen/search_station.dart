@@ -131,99 +131,102 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 //         ?.uid; // คืนค่า userId ของผู้ใช้ปัจจุบัน หรือ null ถ้าไม่มีผู้ใช้ล็อกอิน
 //   }
 
-void _applyFilter(String? filterType) {
-  setState(() {
-    if (filterType == null || filterType == 'all') {
-      // แสดงผลทั้งหมด
-      _places = List.from(_originalPlaces);
-    } else {
-      // กรองตามประเภทที่เลือก
-      _places = _originalPlaces.where((place) {
-        return place['type'].toString().toLowerCase() == filterType;
-      }).toList();
-    }
-  });
-}
+  void _applyFilter(String? filterType) {
+    setState(() {
+      if (filterType == null || filterType == 'all') {
+        // แสดงผลทั้งหมด
+        _places = List.from(_originalPlaces);
+      } else {
+        // กรองตามประเภทที่เลือก
+        _places = _originalPlaces.where((place) {
+          return place['type'].toString().toLowerCase() == filterType;
+        }).toList();
+      }
+    });
+  }
 
-void _showFilterDialog() {
-  _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
-  showDialog(
-    context: context,
-    builder: (BuildContext context) {
-      return StatefulBuilder(
-        builder: (context, setState) { // ใช้ StatefulBuilder เพื่ออัปเดตสถานะภายใน dialog
-          return AlertDialog(
-            title: Text('Filter by Type'),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildFilterOption(setState, 'Show All', 'all.png', 'all'),
-                  _buildFilterOption(setState, 'EV Station', 'ev_station.png', 'ev_station'),
-                  _buildFilterOption(setState, 'Gas Station', 'gas_station.png', 'gas_station'),
-                  _buildFilterOption(setState, 'Cafe', 'cafe.png', 'cafe'),
-                  _buildFilterOption(setState, 'Restaurant', 'restaurant.png', 'restaurant'),
-                  _buildFilterOption(setState, 'Store', 'store.png', 'store'),
-                  _buildFilterOption(setState, 'Tourist Attraction', 'tourist_attraction.png', 'tourist_attraction'),
-                ],
+  void _showFilterDialog() {
+    _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            // ใช้ StatefulBuilder เพื่ออัปเดตสถานะภายใน dialog
+            return AlertDialog(
+              title: Text('Filter by Type'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildFilterOption(setState, 'Show All', 'all.png', 'all'),
+                    _buildFilterOption(
+                        setState, 'EV Station', 'ev_station.png', 'ev_station'),
+                    _buildFilterOption(setState, 'Gas Station',
+                        'gas_station.png', 'gas_station'),
+                    _buildFilterOption(setState, 'Cafe', 'cafe.png', 'cafe'),
+                    _buildFilterOption(
+                        setState, 'Restaurant', 'restaurant.png', 'restaurant'),
+                    _buildFilterOption(setState, 'Store', 'store.png', 'store'),
+                    _buildFilterOption(setState, 'Tourist Attraction',
+                        'tourist_attraction.png', 'tourist_attraction'),
+                  ],
+                ),
               ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _selectedFilter =
+                        _tempSelectedFilter; // อัปเดตตัวเลือกจริงเมื่อกด Apply
+                    _applyFilter(_selectedFilter); // ใช้ฟังก์ชันกรองข้อมูล
+                  },
+                  child: Text('Apply'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context)
+                        .pop(); // ยกเลิกการเปลี่ยนแปลงเมื่อกด Cancel
+                  },
+                  child: Text('Cancel'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterOption(
+      StateSetter setState, String title, String iconName, String filterType) {
+    return CheckboxListTile(
+      value: _tempSelectedFilter == filterType, // ตรวจสอบการเลือกชั่วคราว
+      onChanged: (bool? value) {
+        setState(() {
+          // อัปเดตสถานะทันทีที่คลิก
+          if (value == true) {
+            _tempSelectedFilter = filterType; // อัปเดตค่าชั่วคราวเมื่อเลือก
+          } else {
+            _tempSelectedFilter = 'all'; // หากยกเลิก ให้กลับไปเลือกทั้งหมด
+          }
+        });
+      },
+      title: Row(
+        children: [
+          if (iconName != 'all')
+            Image.asset('assets/icons/$iconName', width: 24, height: 24),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
             ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _selectedFilter = _tempSelectedFilter; // อัปเดตตัวเลือกจริงเมื่อกด Apply
-                  _applyFilter(_selectedFilter); // ใช้ฟังก์ชันกรองข้อมูล
-                },
-                child: Text('Apply'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop(); // ยกเลิกการเปลี่ยนแปลงเมื่อกด Cancel
-                },
-                child: Text('Cancel'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
-}
-
-Widget _buildFilterOption(StateSetter setState, String title, String iconName, String filterType) {
-  return CheckboxListTile(
-    value: _tempSelectedFilter == filterType, // ตรวจสอบการเลือกชั่วคราว
-    onChanged: (bool? value) {
-      setState(() { // อัปเดตสถานะทันทีที่คลิก
-        if (value == true) {
-          _tempSelectedFilter = filterType; // อัปเดตค่าชั่วคราวเมื่อเลือก
-        } else {
-          _tempSelectedFilter = 'all'; // หากยกเลิก ให้กลับไปเลือกทั้งหมด
-        }
-      });
-    },
-    title: Row(
-      children: [
-        if (iconName != 'all')
-          Image.asset('assets/icons/$iconName', width: 24, height: 24),
-        SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            title,
-            overflow: TextOverflow.ellipsis,
           ),
-        ),
-      ],
-    ),
-  );
-}
-
-
-
-
-
-
+        ],
+      ),
+    );
+  }
 
   Future<void> _loadPlacesFromFirestore() async {
     setState(() {
@@ -377,7 +380,8 @@ Widget _buildFilterOption(StateSetter setState, String title, String iconName, S
       'cafe',
       'store',
       'tourist_attraction',
-      'gas_station'
+      'gas_station',
+      'ev_charging_station'
     ];
     List<Map<String, dynamic>> allPlaces = [];
 
@@ -419,6 +423,7 @@ Widget _buildFilterOption(StateSetter setState, String title, String iconName, S
                   'phone': placeDetails['phone'],
                   'opening_hours': placeDetails['opening_hours'],
                   'reviews': placeDetails['reviews'],
+                  'charging_type': result['charging_type'] ?? 'Unknown',
                 });
               } else {
                 print('Invalid coordinates for place: ${result['name']}');
@@ -441,10 +446,11 @@ Widget _buildFilterOption(StateSetter setState, String title, String iconName, S
   }
 
   void _onMapCreated(gms.GoogleMapController controller) {
-    _controllerCompleter.complete(controller);
+    if (!_controllerCompleter.isCompleted) {  // เพิ่มการตรวจสอบเพื่อป้องกันการเรียก complete ซ้ำ
+      _controllerCompleter.complete(controller);
+    }
     if (!_isLoadingLocation && _currentPosition != null) {
-      controller
-          .moveCamera(CameraUpdate.newLatLngZoom(_currentPosition!, 14.0));
+      controller.moveCamera(CameraUpdate.newLatLngZoom(_currentPosition!, 14.0));
     }
   }
 
@@ -461,279 +467,292 @@ Widget _buildFilterOption(StateSetter setState, String title, String iconName, S
       case 'gas_station':
         return _gasStationIcon;
       case 'ev_station':
+      case 'ev_charging_station':
         return _evStationIcon;
       default:
         return BitmapDescriptor.defaultMarker;
     }
   }
 
-  Future<void> _showPlaceDetails(String placeId, gms.LatLng placeLatLng,
-      Map<String, dynamic> place) async {
-    late Map<String, dynamic> placeDetails;
+ Future<void> _showPlaceDetails(String placeId, gms.LatLng placeLatLng,
+    Map<String, dynamic> place) async {
+  late Map<String, dynamic> placeDetails;
 
-    if (place['type'] != null) {
-      if (place['type'] == 'ev_station' ||
-          place['type'] == 'cafe' ||
-          place['type'] == 'restaurant' ||
-          place['type'] == 'store') {
-        placeDetails = place;
-      } else {
-        throw Exception('Place type not supported');
-      }
+  // ตรวจสอบประเภทของ place เพื่อใช้ในการดึงข้อมูล
+  if (place['type'] != null) {
+    if (place['type'] == 'ev_station' ||
+        place['type'] == 'ev_charging_station' || // เพิ่ม ev_charging_station
+        place['type'] == 'cafe' ||
+        place['type'] == 'restaurant' ||
+        place['type'] == 'gas_station' ||
+        place['type'] == 'store') {
+      placeDetails = place;
     } else {
-      placeDetails = await fetchPlaceDetails(
-          placeId); // Fetch the place details from a separate function
+      throw Exception('Place type not supported');
     }
+  } else {
+    placeDetails = await fetchPlaceDetails(placeId);
+  }
 
-    if (placeDetails.isNotEmpty && _currentPosition != null) {
-      TextEditingController _reviewController = TextEditingController();
-      int _rating = 5; // Default rating
-      String? userId = FirebaseAuth.instance.currentUser?.uid;
-      String username =
-          FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
+  if (placeDetails.isNotEmpty && _currentPosition != null) {
+    TextEditingController _reviewController = TextEditingController();
+    int _rating = 5; // ค่าเริ่มต้นสำหรับการให้คะแนน
+    String? userId = FirebaseAuth.instance.currentUser?.uid;
+    String username =
+        FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
 
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: Colors.transparent,
-        builder: (BuildContext context) {
-          return StatefulBuilder(
-            builder: (BuildContext context, StateSetter setModalState) {
-              return Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 10.0,
-                      spreadRadius: 5.0,
-                      offset: Offset(0.0, 0.75),
-                    ),
-                  ],
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Place Name
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 10.0,
+                    spreadRadius: 5.0,
+                    offset: Offset(0.0, 0.75),
+                  ),
+                ],
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ชื่อสถานที่
+                      Row(
+                        children: [
+                          Icon(Icons.place, color: Colors.blueAccent),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              placeDetails['name'] ?? 'No name available',
+                              style: TextStyle(
+                                  fontSize: 24, fontWeight: FontWeight.bold),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      // ที่อยู่
+                      Text(
+                        placeDetails['address'] ?? 'No address available',
+                        style: TextStyle(color: Colors.grey[700], fontSize: 16),
+                      ),
+                      SizedBox(height: 16),
+                      // เบอร์โทรศัพท์
+                      if (placeDetails['phone'] != null)
                         Row(
                           children: [
-                            Icon(Icons.place, color: Colors.blueAccent),
+                            Icon(Icons.phone, color: Colors.green),
                             SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                placeDetails['name'] ?? 'No name available',
-                                style: TextStyle(
-                                    fontSize: 24, fontWeight: FontWeight.bold),
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                            Text(
+                              placeDetails['phone'] ?? 'No phone available',
+                              style: TextStyle(
+                                  color: Colors.green[700], fontSize: 16),
                             ),
                           ],
                         ),
-                        SizedBox(height: 8),
-                        // Address
-                        Text(
-                          placeDetails['address'] ?? 'No address available',
-                          style:
-                              TextStyle(color: Colors.grey[700], fontSize: 16),
-                        ),
-                        SizedBox(height: 16),
-                        // Phone Number
-                        if (placeDetails['phone'] != null)
-                          Row(
-                            children: [
-                              Icon(Icons.phone, color: Colors.green),
-                              SizedBox(width: 8),
-                              Text(
-                                placeDetails['phone'] ?? 'No phone available',
-                                style: TextStyle(
-                                    color: Colors.green[700], fontSize: 16),
-                              ),
-                            ],
-                          ),
-                        SizedBox(height: 16),
-                        // Opening Hours
-                        if (placeDetails['opening_hours'] != null &&
-                            (placeDetails['opening_hours'] as List)
-                                .isNotEmpty) ...[
-                          Text('Opening Hours:',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 18)),
-                          SizedBox(height: 8),
-                          for (String hour
-                              in (placeDetails['opening_hours'] as List))
-                            Text(hour,
-                                style: TextStyle(
-                                    fontSize: 16, color: Colors.black)),
-                          SizedBox(height: 16),
-                        ],
-                        Divider(),
-                        SizedBox(height: 8),
-                        // Combined Reviews from Firestore and Google API
-                        FutureBuilder(
-                          future: _fetchCombinedReviews(placeId),
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return Center(child: CircularProgressIndicator());
-                            }
-
-                            if (snapshot.hasData) {
-                              List<Map<String, dynamic>> reviews =
-                                  snapshot.data as List<Map<String, dynamic>>;
-                              if (reviews.isEmpty) {
-                                return Text("No reviews yet.");
-                              } else {
-                                return Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: reviews.map((review) {
-                                    return Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          review['username'] ?? 'Unknown user',
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 16),
-                                        ),
-                                        Text(review['review'] ??
-                                            'No review text available'),
-                                        Row(
-                                          children: List.generate(5, (index) {
-                                            return Icon(
-                                              index < (review['rating'] ?? 0)
-                                                  ? Icons.star
-                                                  : Icons.star_border,
-                                              color: Colors.amber,
-                                            );
-                                          }),
-                                        ),
-                                        SizedBox(height: 16),
-                                      ],
-                                    );
-                                  }).toList(),
-                                );
-                              }
-                            } else {
-                              return Text("Failed to load reviews.");
-                            }
-                          },
-                        ),
-                        Divider(),
-                        SizedBox(height: 8),
-                        // Review Form
-                        TextField(
-                          controller: _reviewController,
-                          decoration: InputDecoration(
-                            labelText: 'Write your review',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                        SizedBox(height: 12),
-                        // Rating System (Star-based)
-                        Text('Rating:',
+                      SizedBox(height: 16),
+                      // เวลาทำการ
+                      if (placeDetails['opening_hours'] != null &&
+                          (placeDetails['opening_hours'] as List).isNotEmpty) ...[
+                        Text('Opening Hours:',
                             style: TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 18)),
                         SizedBox(height: 8),
-                        Row(
-                          children: List.generate(5, (index) {
-                            return IconButton(
-                              icon: Icon(
-                                index < _rating
-                                    ? Icons.star
-                                    : Icons.star_border,
-                                color: Colors.amber,
-                              ),
-                              onPressed: () {
-                                setModalState(() {
-                                  _rating = index + 1;
-                                });
-                              },
-                            );
-                          }),
-                        ),
-                        SizedBox(height: 12),
-                        // Submit Review Button
-                        ElevatedButton(
-                          onPressed: () async {
-                            await _submitReview(
-                              placeId: placeId,
-                              type: placeDetails['type'] ?? 'unknown',
-                              reviewText: _reviewController.text,
-                              rating: _rating,
-                              userId: userId,
-                              username: username,
-                            );
-                            Navigator.pop(context);
-                          },
-                          child: Text('Submit Review'),
-                        ),
-                        Divider(),
+                        for (String hour in (placeDetails['opening_hours'] as List))
+                          Text(hour,
+                              style: TextStyle(
+                                  fontSize: 16, color: Colors.black)),
                         SizedBox(height: 16),
-                        // Favorite and Go Buttons
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                widget.onAddToFavorites(placeDetails);
-                                Navigator.pop(context);
-                              },
-                              icon: Icon(Icons.favorite_border),
-                              label: Text('Favorite'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.pinkAccent,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(20.0),
-                                ),
-                              ),
-                            ),
-                            ElevatedButton.icon(
-                              onPressed: () {
-                                widget.onAddToHistory({
-                                  'name': placeDetails['name'] ?? 'Unknown',
-                                  'address':
-                                      placeDetails['address'] ?? 'Unknown',
-                                  'phone': placeDetails['phone'] ?? 'Unknown',
-                                  'lat': placeDetails['lat'],
-                                  'lng': placeDetails['lng'],
-                                  'type': placeDetails['type'] ?? 'Unknown',
-                                  'date': DateTime.now().toString(),
-                                  'time':
-                                      DateTime.now().toString().split(' ')[1],
-                                });
-
-                                Navigator.pop(context);
-                                _fetchRouteAndNavigate(placeLatLng);
-                              },
-                              icon: Icon(Icons.directions),
-                              label: Text('Go'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blueAccent,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(20.0),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
                       ],
-                    ),
+                      // ประเภทการชาร์จ (สำหรับ ev_station, ev_charging_station)
+                      if (placeDetails['type'] == 'ev_station' ||
+                          placeDetails['type'] == 'ev_charging_station')
+                        if (placeDetails['charging_type'] != null) ...[
+                          Text('Charging Type:',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 18)),
+                          SizedBox(height: 8),
+                          Text(
+                            placeDetails['charging_type'] ?? 'Not available',
+                            style: TextStyle(fontSize: 16),
+                          ),
+                        ],
+                      Divider(),
+                      SizedBox(height: 8),
+                      // รีวิวที่รวมมาจาก Firestore และ Google API
+                      FutureBuilder(
+                        future: _fetchCombinedReviews(placeId),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(child: CircularProgressIndicator());
+                          }
+
+                          if (snapshot.hasData) {
+                            List<Map<String, dynamic>> reviews =
+                                snapshot.data as List<Map<String, dynamic>>;
+                            if (reviews.isEmpty) {
+                              return Text("No reviews yet.");
+                            } else {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: reviews.map((review) {
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        review['username'] ?? 'Unknown user',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16),
+                                      ),
+                                      Text(review['review'] ??
+                                          'No review text available'),
+                                      Row(
+                                        children: List.generate(5, (index) {
+                                          return Icon(
+                                            index < (review['rating'] ?? 0)
+                                                ? Icons.star
+                                                : Icons.star_border,
+                                            color: Colors.amber,
+                                          );
+                                        }),
+                                      ),
+                                      SizedBox(height: 16),
+                                    ],
+                                  );
+                                }).toList(),
+                              );
+                            }
+                          } else {
+                            return Text("Failed to load reviews.");
+                          }
+                        },
+                      ),
+                      Divider(),
+                      SizedBox(height: 8),
+                      // ฟอร์มรีวิว
+                      TextField(
+                        controller: _reviewController,
+                        decoration: InputDecoration(
+                          labelText: 'Write your review',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      // ระบบการให้คะแนน
+                      Text('Rating:',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 18)),
+                      SizedBox(height: 8),
+                      Row(
+                        children: List.generate(5, (index) {
+                          return IconButton(
+                            icon: Icon(
+                              index < _rating
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              color: Colors.amber,
+                            ),
+                            onPressed: () {
+                              setModalState(() {
+                                _rating = index + 1;
+                              });
+                            },
+                          );
+                        }),
+                      ),
+                      SizedBox(height: 12),
+                      // ปุ่ม Submit รีวิว
+                      ElevatedButton(
+                        onPressed: () async {
+                          await _submitReview(
+                            placeId: placeId,
+                            type: placeDetails['type'] ?? 'unknown',
+                            reviewText: _reviewController.text,
+                            rating: _rating,
+                            userId: userId,
+                            username: username,
+                          );
+                          Navigator.pop(context);
+                        },
+                        child: Text('Submit Review'),
+                      ),
+                      Divider(),
+                      SizedBox(height: 16),
+                      // ปุ่ม Favorite และ Go
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              widget.onAddToFavorites(placeDetails);
+                              Navigator.pop(context);
+                            },
+                            icon: Icon(Icons.favorite_border),
+                            label: Text('Favorite'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.pinkAccent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20.0),
+                              ),
+                            ),
+                          ),
+                          ElevatedButton.icon(
+                            onPressed: () {
+                              widget.onAddToHistory({
+                                'name': placeDetails['name'] ?? 'Unknown',
+                                'address':
+                                    placeDetails['address'] ?? 'Unknown',
+                                'phone': placeDetails['phone'] ?? 'Unknown',
+                                'lat': placeDetails['lat'],
+                                'lng': placeDetails['lng'],
+                                'type': placeDetails['type'] ?? 'Unknown',
+                                'date': DateTime.now().toString(),
+                                'time':
+                                    DateTime.now().toString().split(' ')[1],
+                              });
+
+                              Navigator.pop(context);
+                              _fetchRouteAndNavigate(placeLatLng);
+                            },
+                            icon: Icon(Icons.directions),
+                            label: Text('Go'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20.0),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
-          );
-        },
-      );
-    }
+              ),
+            );
+          },
+        );
+      },
+    );
   }
+}
+
 
   Future<String> fetchUsernameFromFirestore(String userId) async {
     DocumentSnapshot userSnapshot =
@@ -1359,8 +1378,12 @@ Widget _buildFilterOption(StateSetter setState, String title, String iconName, S
                         title: place['name'] ?? 'No name available',
                         snippet: place['address'] ?? 'No address available',
                         onTap: () {
-                          _showPlaceDetails(
-                              place['place_id'].toString(), placeLatLng, place);
+                          if (place['type'] == 'ev_charging_station') {
+                            _showEVStationDetails(place, placeLatLng);
+                          } else {
+                            _showPlaceDetails(place['place_id'].toString(),
+                                placeLatLng, place);
+                          }
                         },
                       ),
                       icon: icon ?? BitmapDescriptor.defaultMarker,
