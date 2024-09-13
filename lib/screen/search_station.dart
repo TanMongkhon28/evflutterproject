@@ -336,6 +336,56 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
+  Future<Map<String, dynamic>> _fetchEVChargingStationDetails(String placeId) async {
+  final url =
+      'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$_apiKey';
+
+  try {
+    final response = await http.get(Uri.parse(url));
+
+    if (response.statusCode == 200) {
+      final jsonResponse = json.decode(response.body);
+      final result = jsonResponse['result'];
+
+      if (result == null) {
+        throw Exception('Invalid data format from Google API');
+      }
+
+      String chargingType = 'EV Charging Station';
+
+      final weekdayText = result['opening_hours']?['weekday_text'] ?? [];
+      if (weekdayText is! List) {
+        throw Exception('weekday_text is not a list');
+      }
+
+      return {
+        'name': result['name'] ?? 'No name available',
+        'address': result['formatted_address'] ?? 'No address available',
+        'phone': result['formatted_phone_number'] ?? 'No phone available',
+        'international_phone':
+            result['international_phone_number'] ?? 'No international phone available',
+        'opening_hours': weekdayText,
+        'photos': result['photos'] ?? [],
+        'lat': result['geometry']['location']['lat'],
+        'lng': result['geometry']['location']['lng'],
+        'rating': result['rating'] ?? 0.0,
+        'reviews': result['reviews'] ?? [],
+        'charging_type': chargingType,
+        'place_id': result['place_id'] ?? '',
+      };
+    } else {
+      print('Failed to fetch place details: ${response.statusCode}');
+      return {};
+    }
+  } catch (e) {
+    print('Error fetching place details: $e');
+    return {};
+  }
+}
+
+
+
+  
   Future<Map<String, dynamic>> fetchPlaceDetails(String placeId) async {
     final url =
         'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$_apiKey';
@@ -368,6 +418,60 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
+  Future<void> _fetchEVChargingStations(String location, String radius) async {
+    final url =
+        'https://maps.googleapis.com/maps/api/place/textsearch/json?query=ev_charging_station&location=$location&radius=$radius&key=$_apiKey';
+
+    List<Map<String, dynamic>> evChargingStations = [];
+
+    try {
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(response.body);
+        final results = jsonResponse['results'] as List<dynamic>;
+
+        if (results.isNotEmpty) {
+          for (var result in results) {
+            double lat = result['geometry']['location']['lat'] ?? 0.0;
+            double lng = result['geometry']['location']['lng'] ?? 0.0;
+
+            if (lat != 0.0 && lng != 0.0) {
+              Map<String, dynamic> placeDetails =
+                  await _fetchEVChargingStationDetails(
+                      result['place_id'] ?? '');
+
+                         // ตรวจสอบประเภทจากชื่อแทน types
+            String placeName = result['name'] ?? 'Unknown';
+            if (placeName.toLowerCase().contains('charging') || placeName.toLowerCase().contains('ev')) {
+              evChargingStations.add({
+                'name': result['name'] ?? 'Unknown',
+                'address': result['formatted_address'] ?? 'No address available',
+                'lat': lat,
+                'lng': lng,
+                'place_id': result['place_id'] ?? '',
+                'type': 'electric_vehicle_charging_station',  // กำหนด type ให้ตรงกับ EV Station
+                'phone': placeDetails['phone'],
+                'opening_hours': placeDetails['opening_hours'],
+                'charging_type': placeDetails['charging_type'],
+                'reviews': placeDetails['reviews'],
+              });
+            }
+          }
+        }
+      }
+    } else {
+      print('Failed to fetch EV charging stations with status code: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('Error fetching EV charging stations: $e');
+  }
+
+  setState(() {
+    _places.addAll(evChargingStations);
+  });
+}
+
   Future<void> _fetchPlaces() async {
     if (_currentPosition == null) return;
 
@@ -381,9 +485,11 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       'store',
       'tourist_attraction',
       'gas_station',
-      'ev_charging_station'
     ];
     List<Map<String, dynamic>> allPlaces = [];
+
+    // เรียกฟังก์ชันเพื่อดึง EV Charging Stations
+    await _fetchEVChargingStations(location, radius);
 
     for (String type in types) {
       final url =
@@ -404,18 +510,16 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                   result['vicinity'] ??
                   'No address available';
 
-              // ตรวจสอบการมีอยู่ของ lat/lng ก่อนบันทึก
               double lat = result['geometry']['location']['lat'] ?? 0.0;
               double lng = result['geometry']['location']['lng'] ?? 0.0;
 
-              // ตรวจสอบว่าพิกัดถูกต้องหรือไม่ (ไม่ใช่ 0)
               if (lat != 0.0 && lng != 0.0) {
                 Map<String, dynamic> placeDetails =
                     await fetchPlaceDetails(result['place_id'] ?? '');
 
                 allPlaces.add({
                   'name': result['name'] ?? 'Unknown',
-                  'address': address, // ใช้ address ที่ได้จาก API
+                  'address': address,
                   'lat': lat,
                   'lng': lng,
                   'place_id': result['place_id'] ?? '',
@@ -446,11 +550,13 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   }
 
   void _onMapCreated(gms.GoogleMapController controller) {
-    if (!_controllerCompleter.isCompleted) {  // เพิ่มการตรวจสอบเพื่อป้องกันการเรียก complete ซ้ำ
+    if (!_controllerCompleter.isCompleted) {
+      // เพิ่มการตรวจสอบเพื่อป้องกันการเรียก complete ซ้ำ
       _controllerCompleter.complete(controller);
     }
     if (!_isLoadingLocation && _currentPosition != null) {
-      controller.moveCamera(CameraUpdate.newLatLngZoom(_currentPosition!, 14.0));
+      controller
+          .moveCamera(CameraUpdate.newLatLngZoom(_currentPosition!, 14.0));
     }
   }
 
@@ -467,292 +573,297 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       case 'gas_station':
         return _gasStationIcon;
       case 'ev_station':
-      case 'ev_charging_station':
+      case 'electric_vehicle_charging_station':
         return _evStationIcon;
       default:
         return BitmapDescriptor.defaultMarker;
     }
   }
 
- Future<void> _showPlaceDetails(String placeId, gms.LatLng placeLatLng,
-    Map<String, dynamic> place) async {
-  late Map<String, dynamic> placeDetails;
+  Future<void> _showPlaceDetails(String placeId, gms.LatLng placeLatLng,
+      Map<String, dynamic> place) async {
+    late Map<String, dynamic> placeDetails;
 
-  // ตรวจสอบประเภทของ place เพื่อใช้ในการดึงข้อมูล
-  if (place['type'] != null) {
-    if (place['type'] == 'ev_station' ||
-        place['type'] == 'ev_charging_station' || // เพิ่ม ev_charging_station
-        place['type'] == 'cafe' ||
-        place['type'] == 'restaurant' ||
-        place['type'] == 'gas_station' ||
-        place['type'] == 'store') {
-      placeDetails = place;
+    // ตรวจสอบประเภทของ place เพื่อใช้ในการดึงข้อมูล
+    if (place['type'] != null) {
+      if (place['type'] == 'ev_station' ||
+          place['type'] ==
+              'electric_vehicle_charging_station' || // เพิ่ม ev_charging_station
+          place['type'] == 'cafe' ||
+          place['type'] == 'restaurant' ||
+          place['type'] == 'gas_station' ||
+          place['type'] == 'store') {
+        placeDetails = place;
+      } else {
+        throw Exception('Place type not supported');
+      }
     } else {
-      throw Exception('Place type not supported');
+      placeDetails = await fetchPlaceDetails(placeId);
     }
-  } else {
-    placeDetails = await fetchPlaceDetails(placeId);
-  }
 
-  if (placeDetails.isNotEmpty && _currentPosition != null) {
-    TextEditingController _reviewController = TextEditingController();
-    int _rating = 5; // ค่าเริ่มต้นสำหรับการให้คะแนน
-    String? userId = FirebaseAuth.instance.currentUser?.uid;
-    String username =
-        FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
+    if (placeDetails.isNotEmpty && _currentPosition != null) {
+      TextEditingController _reviewController = TextEditingController();
+      int _rating = 5; // ค่าเริ่มต้นสำหรับการให้คะแนน
+      String? userId = FirebaseAuth.instance.currentUser?.uid;
+      String username =
+          FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
 
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setModalState) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 10.0,
-                    spreadRadius: 5.0,
-                    offset: Offset(0.0, 0.75),
+      showModalBottomSheet(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (BuildContext context) {
+          return StatefulBuilder(
+            builder: (BuildContext context, StateSetter setModalState) {
+              return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(20),
+                    topRight: Radius.circular(20),
                   ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // ชื่อสถานที่
-                      Row(
-                        children: [
-                          Icon(Icons.place, color: Colors.blueAccent),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              placeDetails['name'] ?? 'No name available',
-                              style: TextStyle(
-                                  fontSize: 24, fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8),
-                      // ที่อยู่
-                      Text(
-                        placeDetails['address'] ?? 'No address available',
-                        style: TextStyle(color: Colors.grey[700], fontSize: 16),
-                      ),
-                      SizedBox(height: 16),
-                      // เบอร์โทรศัพท์
-                      if (placeDetails['phone'] != null)
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 10.0,
+                      spreadRadius: 5.0,
+                      offset: Offset(0.0, 0.75),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ชื่อสถานที่
                         Row(
                           children: [
-                            Icon(Icons.phone, color: Colors.green),
+                            Icon(Icons.place, color: Colors.blueAccent),
                             SizedBox(width: 8),
-                            Text(
-                              placeDetails['phone'] ?? 'No phone available',
-                              style: TextStyle(
-                                  color: Colors.green[700], fontSize: 16),
+                            Expanded(
+                              child: Text(
+                                placeDetails['name'] ?? 'No name available',
+                                style: TextStyle(
+                                    fontSize: 24, fontWeight: FontWeight.bold),
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
-                      SizedBox(height: 16),
-                      // เวลาทำการ
-                      if (placeDetails['opening_hours'] != null &&
-                          (placeDetails['opening_hours'] as List).isNotEmpty) ...[
-                        Text('Opening Hours:',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
                         SizedBox(height: 8),
-                        for (String hour in (placeDetails['opening_hours'] as List))
-                          Text(hour,
-                              style: TextStyle(
-                                  fontSize: 16, color: Colors.black)),
+                        // ที่อยู่
+                        Text(
+                          placeDetails['address'] ?? 'No address available',
+                          style:
+                              TextStyle(color: Colors.grey[700], fontSize: 16),
+                        ),
                         SizedBox(height: 16),
-                      ],
-                      // ประเภทการชาร์จ (สำหรับ ev_station, ev_charging_station)
-                      if (placeDetails['type'] == 'ev_station' ||
-                          placeDetails['type'] == 'ev_charging_station')
-                        if (placeDetails['charging_type'] != null) ...[
-                          Text('Charging Type:',
+                        // เบอร์โทรศัพท์
+                        if (placeDetails['phone'] != null)
+                          Row(
+                            children: [
+                              Icon(Icons.phone, color: Colors.green),
+                              SizedBox(width: 8),
+                              Text(
+                                placeDetails['phone'] ?? 'No phone available',
+                                style: TextStyle(
+                                    color: Colors.green[700], fontSize: 16),
+                              ),
+                            ],
+                          ),
+                        SizedBox(height: 16),
+                        // เวลาทำการ
+                        if (placeDetails['opening_hours'] != null &&
+                            (placeDetails['opening_hours'] as List)
+                                .isNotEmpty) ...[
+                          Text('Opening Hours:',
                               style: TextStyle(
                                   fontWeight: FontWeight.bold, fontSize: 18)),
                           SizedBox(height: 8),
-                          Text(
-                            placeDetails['charging_type'] ?? 'Not available',
-                            style: TextStyle(fontSize: 16),
-                          ),
+                          for (String hour
+                              in (placeDetails['opening_hours'] as List))
+                            Text(hour,
+                                style: TextStyle(
+                                    fontSize: 16, color: Colors.black)),
+                          SizedBox(height: 16),
                         ],
-                      Divider(),
-                      SizedBox(height: 8),
-                      // รีวิวที่รวมมาจาก Firestore และ Google API
-                      FutureBuilder(
-                        future: _fetchCombinedReviews(placeId),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return Center(child: CircularProgressIndicator());
-                          }
-
-                          if (snapshot.hasData) {
-                            List<Map<String, dynamic>> reviews =
-                                snapshot.data as List<Map<String, dynamic>>;
-                            if (reviews.isEmpty) {
-                              return Text("No reviews yet.");
-                            } else {
-                              return Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: reviews.map((review) {
-                                  return Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        review['username'] ?? 'Unknown user',
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 16),
-                                      ),
-                                      Text(review['review'] ??
-                                          'No review text available'),
-                                      Row(
-                                        children: List.generate(5, (index) {
-                                          return Icon(
-                                            index < (review['rating'] ?? 0)
-                                                ? Icons.star
-                                                : Icons.star_border,
-                                            color: Colors.amber,
-                                          );
-                                        }),
-                                      ),
-                                      SizedBox(height: 16),
-                                    ],
-                                  );
-                                }).toList(),
-                              );
+                        // ประเภทการชาร์จ (สำหรับ ev_station, ev_charging_station)
+                        if (placeDetails['type'] == 'ev_station' ||
+                            placeDetails['type'] ==
+                                'electric_vehicle_charging_station')
+                          if (placeDetails['charging_type'] != null) ...[
+                            Text('Charging Type:',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 18)),
+                            SizedBox(height: 8),
+                            Text(
+                              placeDetails['charging_type'] ?? 'Not available',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                          ],
+                        Divider(),
+                        SizedBox(height: 8),
+                        // รีวิวที่รวมมาจาก Firestore และ Google API
+                        FutureBuilder(
+                          future: _fetchCombinedReviews(placeId),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return Center(child: CircularProgressIndicator());
                             }
-                          } else {
-                            return Text("Failed to load reviews.");
-                          }
-                        },
-                      ),
-                      Divider(),
-                      SizedBox(height: 8),
-                      // ฟอร์มรีวิว
-                      TextField(
-                        controller: _reviewController,
-                        decoration: InputDecoration(
-                          labelText: 'Write your review',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      SizedBox(height: 12),
-                      // ระบบการให้คะแนน
-                      Text('Rating:',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 18)),
-                      SizedBox(height: 8),
-                      Row(
-                        children: List.generate(5, (index) {
-                          return IconButton(
-                            icon: Icon(
-                              index < _rating
-                                  ? Icons.star
-                                  : Icons.star_border,
-                              color: Colors.amber,
-                            ),
-                            onPressed: () {
-                              setModalState(() {
-                                _rating = index + 1;
-                              });
-                            },
-                          );
-                        }),
-                      ),
-                      SizedBox(height: 12),
-                      // ปุ่ม Submit รีวิว
-                      ElevatedButton(
-                        onPressed: () async {
-                          await _submitReview(
-                            placeId: placeId,
-                            type: placeDetails['type'] ?? 'unknown',
-                            reviewText: _reviewController.text,
-                            rating: _rating,
-                            userId: userId,
-                            username: username,
-                          );
-                          Navigator.pop(context);
-                        },
-                        child: Text('Submit Review'),
-                      ),
-                      Divider(),
-                      SizedBox(height: 16),
-                      // ปุ่ม Favorite และ Go
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              widget.onAddToFavorites(placeDetails);
-                              Navigator.pop(context);
-                            },
-                            icon: Icon(Icons.favorite_border),
-                            label: Text('Favorite'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.pinkAccent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20.0),
-                              ),
-                            ),
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              widget.onAddToHistory({
-                                'name': placeDetails['name'] ?? 'Unknown',
-                                'address':
-                                    placeDetails['address'] ?? 'Unknown',
-                                'phone': placeDetails['phone'] ?? 'Unknown',
-                                'lat': placeDetails['lat'],
-                                'lng': placeDetails['lng'],
-                                'type': placeDetails['type'] ?? 'Unknown',
-                                'date': DateTime.now().toString(),
-                                'time':
-                                    DateTime.now().toString().split(' ')[1],
-                              });
 
-                              Navigator.pop(context);
-                              _fetchRouteAndNavigate(placeLatLng);
-                            },
-                            icon: Icon(Icons.directions),
-                            label: Text('Go'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blueAccent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20.0),
+                            if (snapshot.hasData) {
+                              List<Map<String, dynamic>> reviews =
+                                  snapshot.data as List<Map<String, dynamic>>;
+                              if (reviews.isEmpty) {
+                                return Text("No reviews yet.");
+                              } else {
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: reviews.map((review) {
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          review['username'] ?? 'Unknown user',
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16),
+                                        ),
+                                        Text(review['review'] ??
+                                            'No review text available'),
+                                        Row(
+                                          children: List.generate(5, (index) {
+                                            return Icon(
+                                              index < (review['rating'] ?? 0)
+                                                  ? Icons.star
+                                                  : Icons.star_border,
+                                              color: Colors.amber,
+                                            );
+                                          }),
+                                        ),
+                                        SizedBox(height: 16),
+                                      ],
+                                    );
+                                  }).toList(),
+                                );
+                              }
+                            } else {
+                              return Text("Failed to load reviews.");
+                            }
+                          },
+                        ),
+                        Divider(),
+                        SizedBox(height: 8),
+                        // ฟอร์มรีวิว
+                        TextField(
+                          controller: _reviewController,
+                          decoration: InputDecoration(
+                            labelText: 'Write your review',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        SizedBox(height: 12),
+                        // ระบบการให้คะแนน
+                        Text('Rating:',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 18)),
+                        SizedBox(height: 8),
+                        Row(
+                          children: List.generate(5, (index) {
+                            return IconButton(
+                              icon: Icon(
+                                index < _rating
+                                    ? Icons.star
+                                    : Icons.star_border,
+                                color: Colors.amber,
+                              ),
+                              onPressed: () {
+                                setModalState(() {
+                                  _rating = index + 1;
+                                });
+                              },
+                            );
+                          }),
+                        ),
+                        SizedBox(height: 12),
+                        // ปุ่ม Submit รีวิว
+                        ElevatedButton(
+                          onPressed: () async {
+                            await _submitReview(
+                              placeId: placeId,
+                              type: placeDetails['type'] ?? 'unknown',
+                              reviewText: _reviewController.text,
+                              rating: _rating,
+                              userId: userId,
+                              username: username,
+                            );
+                            Navigator.pop(context);
+                          },
+                          child: Text('Submit Review'),
+                        ),
+                        Divider(),
+                        SizedBox(height: 16),
+                        // ปุ่ม Favorite และ Go
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                widget.onAddToFavorites(placeDetails);
+                                Navigator.pop(context);
+                              },
+                              icon: Icon(Icons.favorite_border),
+                              label: Text('Favorite'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.pinkAccent,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20.0),
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                            ElevatedButton.icon(
+                              onPressed: () {
+                                widget.onAddToHistory({
+                                  'name': placeDetails['name'] ?? 'Unknown',
+                                  'address':
+                                      placeDetails['address'] ?? 'Unknown',
+                                  'phone': placeDetails['phone'] ?? 'Unknown',
+                                  'lat': placeDetails['lat'],
+                                  'lng': placeDetails['lng'],
+                                  'type': placeDetails['type'] ?? 'Unknown',
+                                  'date': DateTime.now().toString(),
+                                  'time':
+                                      DateTime.now().toString().split(' ')[1],
+                                });
+
+                                Navigator.pop(context);
+                                _fetchRouteAndNavigate(placeLatLng);
+                              },
+                              icon: Icon(Icons.directions),
+                              label: Text('Go'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blueAccent,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20.0),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-        );
-      },
-    );
+              );
+            },
+          );
+        },
+      );
+    }
   }
-}
-
 
   Future<String> fetchUsernameFromFirestore(String userId) async {
     DocumentSnapshot userSnapshot =
@@ -963,11 +1074,13 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       int dlng = (result & 1) != 0 ? ~(result >> 1) : (result >> 1);
       lng += dlng;
 
-      polylineCoordinates.add(gms.LatLng(lat / 1E5, lng / 1E5));
-    }
-
-    return polylineCoordinates;
+    polylineCoordinates.add(gms.LatLng(
+      (lat / 1E5).toDouble(),
+      (lng / 1E5).toDouble(),
+    ));
   }
+  return polylineCoordinates;
+}
 
   Future<void> _goToCurrentLocation() async {
     if (_currentPosition == null) return;
@@ -1039,125 +1152,223 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       SnackBar(content: Text('Request sent to Admin for approval')),
     );
   }
-
-  void _showEVStationDetails(
-      Map<String, dynamic> place, gms.LatLng placeLatLng) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (BuildContext context) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(20),
-              topRight: Radius.circular(20),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black26,
-                blurRadius: 10.0,
-                spreadRadius: 5.0,
-                offset: Offset(0.0, 0.75),
-              ),
-            ],
+void _showEVStationDetails(Map<String, dynamic> place, gms.LatLng placeLatLng) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (BuildContext context) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.ev_station, color: Colors.blueAccent),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          place['name'] ?? 'No name available',
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 10.0,
+              spreadRadius: 5.0,
+              offset: Offset(0.0, 0.75),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ชื่อสถานี EV
+                Row(
+                  children: [
+                    Icon(Icons.ev_station, color: Colors.blueAccent),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        place.containsKey('name') ? place['name'] : 'No name available',
+                        style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                    ],
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    place['address'] ?? 'No address available',
-                    style: TextStyle(color: Colors.grey[700]),
-                  ),
-                  SizedBox(height: 8),
-                  if (place['phone'] != null) Text('Phone: ${place['phone']}'),
-                  SizedBox(height: 8),
-                  if (place['open_hours'] != null)
-                    Text(
-                      'Open Hours: ${place['open_hours']}',
-                      style: TextStyle(color: Colors.green),
                     ),
-                  SizedBox(height: 8),
-                  if (place['charging_type'] != null)
-                    Text('Charging Type: ${place['charging_type']}'),
-                  SizedBox(height: 16),
-                  Divider(),
-                  SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          widget.onAddToFavorites(place);
-                          Navigator.pop(context);
-                        },
-                        icon: Icon(Icons.favorite_border),
-                        label: Text('Favorite'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.pinkAccent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20.0),
-                          ),
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          print(
-                              'Selected place lat: ${place['lat']}, lng: ${place['lng']}');
-                          widget.onAddToHistory({
-                            'name': place['name'] ?? 'Unknown',
-                            'address': place['address'] ??
-                                'Unknown', // ใช้คีย์ 'address'
-                            'phone':
-                                place['phone'] ?? 'Unknown', // ใช้คีย์ 'phone'
-                            'lat': place['lat'],
-                            'lng': place['lng'],
-                            'type': place['type'] ?? 'Unknown',
-                            'date': DateTime.now().toString(),
-                            'time': DateTime.now().toString().split(' ')[1],
-                          });
+                  ],
+                ),
+                SizedBox(height: 8),
 
-                          Navigator.pop(context);
-                        },
-                        icon: Icon(Icons.directions),
-                        label: Text('Go'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueAccent,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20.0),
+                // ที่อยู่
+                Text(
+                  place.containsKey('formatted_address') 
+                      ? place['formatted_address'] 
+                      : (place.containsKey('address') ? place['address'] : 'No address available'),
+                  style: TextStyle(color: Colors.grey[700]),
+                ),
+                SizedBox(height: 8),
+
+                // หมายเลขโทรศัพท์
+                if ((place.containsKey('formatted_phone_number') &&
+                        place['formatted_phone_number'].toString().isNotEmpty) ||
+                    (place.containsKey('phone') && place['phone'].toString().isNotEmpty))
+                  Text('Phone: ${place['formatted_phone_number'] ?? place['phone']}'),
+                SizedBox(height: 8),
+
+                // เวลาทำการ (จาก current_opening_hours ถ้ามี)
+                if (place.containsKey('current_opening_hours') &&
+                    place['current_opening_hours'] is Map &&
+                    place['current_opening_hours']['weekday_text'] != null &&
+                    place['current_opening_hours']['weekday_text'] is List)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Opening Hours:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ...List.generate(
+                        (place['current_opening_hours']['weekday_text'] as List).length,
+                        (index) => Text(place['current_opening_hours']['weekday_text'][index]),
+                      ),
+                    ],
+                  ),
+                SizedBox(height: 8),
+
+                // รูปภาพ
+                if (place.containsKey('photos') &&
+                    place['photos'] is List &&
+                    (place['photos'] as List).isNotEmpty)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Divider(),
+                      Text('Photos:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: List.generate(
+                            (place['photos'] as List).length,
+                            (index) {
+                              var photo = place['photos'][index];
+                              if (photo != null && photo is Map && photo.containsKey('photo_reference')) {
+                                return Padding(
+                                  padding: const EdgeInsets.all(4.0),
+                                  child: Image.network(
+                                    'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo['photo_reference']}&key=YOUR_API_KEY',
+                                    width: 200,
+                                    height: 150,
+                                    fit: BoxFit.cover,
+                                  ),
+                                );
+                              }
+                              return Container(); // ถ้าไม่มีข้อมูลรูปภาพก็แสดงค่าว่าง
+                            },
                           ),
                         ),
                       ),
                     ],
                   ),
-                ],
-              ),
+                SizedBox(height: 8),
+
+                // รีวิว
+                if (place.containsKey('reviews') &&
+                    place['reviews'] is List &&
+                    (place['reviews'] as List).isNotEmpty)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Divider(),
+                      Text('Reviews:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ...List.generate(
+                        (place['reviews'] as List).length,
+                        (index) {
+                          var review = place['reviews'][index];
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    CircleAvatar(
+                                      backgroundImage: NetworkImage(review['profile_photo_url']),
+                                      radius: 16,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(review['author_name']),
+                                  ],
+                                ),
+                                SizedBox(height: 4),
+                                Text('Rating: ${review['rating']}'),
+                                Text(review['text'].isNotEmpty
+                                    ? review['text']
+                                    : 'No review text available'),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                Divider(),
+
+                // ปุ่ม Favorite และ Go
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (place.containsKey('name') || place.containsKey('formatted_address')) {
+                          widget.onAddToFavorites(place);
+                        }
+                        Navigator.pop(context);
+                      },
+                      icon: Icon(Icons.favorite_border),
+                      label: Text('Favorite'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.pinkAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        widget.onAddToHistory({
+                          'name': place.containsKey('name') ? place['name'] : 'Unknown',
+                          'address': place.containsKey('formatted_address')
+                              ? place['formatted_address']
+                              : (place.containsKey('address') ? place['address'] : 'Unknown'),
+                          'phone': place.containsKey('formatted_phone_number')
+                              ? place['formatted_phone_number']
+                              : (place.containsKey('phone') ? place['phone'] : 'Unknown'),
+                          'lat': placeLatLng.latitude,
+                          'lng': placeLatLng.longitude,
+                          'type': place.containsKey('types') ? place['types'] : 'Unknown',
+                          'date': DateTime.now().toString(),
+                          'time': DateTime.now().toString().split(' ')[1],
+                        });
+
+                        Navigator.pop(context);
+                        _fetchRouteAndNavigate(placeLatLng);
+                      },
+                      icon: Icon(Icons.directions),
+                      label: Text('Go'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueAccent,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20.0),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
+
+
+
 
   void _clearRoute() {
     setState(() {
@@ -1378,7 +1589,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                         title: place['name'] ?? 'No name available',
                         snippet: place['address'] ?? 'No address available',
                         onTap: () {
-                          if (place['type'] == 'ev_charging_station') {
+                          if (place['type'] ==
+                              'electric_vehicle_charging_station') {
                             _showEVStationDetails(place, placeLatLng);
                           } else {
                             _showPlaceDetails(place['place_id'].toString(),
