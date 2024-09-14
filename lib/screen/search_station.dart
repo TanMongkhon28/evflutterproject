@@ -592,6 +592,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           place['type'] == 'cafe' ||
           place['type'] == 'restaurant' ||
           place['type'] == 'gas_station' ||
+          place['type'] == 'tourist_attraction'||
           place['type'] == 'store') {
         placeDetails = place;
       } else {
