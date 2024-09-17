@@ -210,6 +210,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
+  
+
   void onSuggestionSelected(String placeId, String description) async {
     final placeDetails =
         await fetchPlaceDetails(placeId); // ดึงรายละเอียดสถานที่
@@ -221,44 +223,59 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       // คำนวณและแสดงระยะทางและเวลาเดินทาง
     });
   }
+Map<String, List<Map<String, dynamic>>> _searchCache = {};
 
-  Future<void> _fetchPlaceSuggestions(String query) async {
-    if (query.isEmpty || query.length < 3) {
-      setState(() {
-        _suggestions.clear();
-      });
-      return;
-    }
-
-    if (_currentPosition == null) {
-      print("Current position is null");
-      return;
-    }
-
-    final url =
-        'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
-
-    try {
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode == 200) {
-        final jsonResponse = json.decode(response.body);
-        final predictions = jsonResponse['predictions'] as List;
-
-        setState(() {
-          _suggestions = predictions.map((prediction) {
-            return {
-              'description': prediction['description'],
-              'place_id': prediction['place_id'],
-            };
-          }).toList();
-        });
-      } else {
-        print('Error fetching suggestions: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Error fetching suggestions: $e');
-    }
+Future<void> _fetchPlaceSuggestions(String query) async {
+  if (query.isEmpty || query.length < 3) {
+    setState(() {
+      _suggestions.clear();
+    });
+    return;
   }
+  
+  // ถ้าคำค้นหาอยู่ในแคชแล้ว ใช้ข้อมูลจากแคช
+  if (_searchCache.containsKey(query)) {
+    setState(() {
+      _suggestions = _searchCache[query]!;
+    });
+    return;
+  }
+
+  if (_currentPosition == null) {
+    print("Current position is null");
+    return;
+  }
+
+  final url =
+      'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
+
+  try {
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final jsonResponse = json.decode(response.body);
+      final predictions = jsonResponse['predictions'] as List;
+
+      // แปลงผลลัพธ์จาก Autocomplete API เป็นรูปแบบที่ต้องการ
+      final List<Map<String, dynamic>> fetchedSuggestions = predictions.map((prediction) {
+        return {
+          'description': prediction['description'],
+          'place_id': prediction['place_id'],
+        };
+      }).toList();
+
+      // อัปเดตแคชการค้นหาด้วยผลลัพธ์ใหม่
+      setState(() {
+        _suggestions = fetchedSuggestions;
+        _searchCache[query] = fetchedSuggestions;  // เก็บผลลัพธ์ในแคช
+      });
+    } else {
+      print('Error fetching suggestions: ${response.statusCode}');
+    }
+  } catch (e) {
+    print('Error fetching suggestions: $e');
+  }
+}
+
 
   void _showFilterDialog() {
     _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
