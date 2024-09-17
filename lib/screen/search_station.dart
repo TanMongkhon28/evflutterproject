@@ -31,7 +31,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   BitmapDescriptor? _touristAttractionIcon;
   BitmapDescriptor? _gasStationIcon;
   BitmapDescriptor? _evStationIcon;
-  final String _apiKey = 'AIzaSyCrOHVlCBGDkDoO88AD_E_m3C1vPXB02OI';
+  final String _apiKey = 'AIzaSyB67ZhLCsWm7sC9pUluesjiCOT-Wwu67oU';
   List<Map<String, dynamic>> _places = [];
   TextEditingController _searchController = TextEditingController();
   bool _isLoadingLocation = true;
@@ -161,7 +161,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                   children: [
                     _buildFilterOption(setState, 'Show All', 'all.png', 'all'),
                     _buildFilterOption(
-                        setState, 'EV Station', 'ev_station.png', 'ev_station'),
+                        setState, 'EV Station', 'ev_station.png', 'ev_station',),
                     _buildFilterOption(setState, 'Gas Station',
                         'gas_station.png', 'gas_station'),
                     _buildFilterOption(setState, 'Cafe', 'cafe.png', 'cafe'),
@@ -451,7 +451,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                   'lng': lng,
                   'place_id': result['place_id'] ?? '',
                   'type':
-                      'electric_vehicle_charging_station', // กำหนด type ให้ตรงกับ EV Station
+                      'electric_vehicle_charging_station', 
                   'phone': placeDetails['phone'],
                   'opening_hours': placeDetails['opening_hours'],
                   'charging_type': placeDetails['charging_type'],
@@ -1007,7 +1007,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   Future<List<Map<String, dynamic>>> _fetchGoogleReviews(String placeId) async {
     try {
       final url =
-          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=AIzaSyCrOHVlCBGDkDoO88AD_E_m3C1vPXB02OI';
+          'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=AIzaSyB67ZhLCsWm7sC9pUluesjiCOT-Wwu67oU';
       final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
