@@ -39,6 +39,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   bool _isLoadingLocation = true;
   bool _isNavigating = false;
   bool _isSearching = false;
+  Timer? _debounce;
   String? _distanceText;
   String? _durationText;
   List<String> _searchHistory = [];
@@ -171,6 +172,29 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
+  void _searchAllPlaces(String query) async {
+    try {
+      // ดึงข้อมูลสถานที่จาก Google API
+      await _fetchPlaces();
+
+      // ดึงข้อมูลสถานที่จาก Firestore
+      await _loadPlacesFromFirestore();
+
+      // ทำการค้นหาในรายการทั้งหมดตามคำค้นหาที่ให้มา
+      setState(() {
+        _places = _originalPlaces.where((place) {
+          final matchQuery = place['name']
+              .toString()
+              .toLowerCase()
+              .contains(query.toLowerCase());
+          return matchQuery;
+        }).toList();
+      });
+    } catch (e) {
+      print('Error searching all places: $e');
+    }
+  }
+
   double _calculateDistance(
       double lat1, double lng1, double lat2, double lng2) {
     const p = 0.017453292519943295;
@@ -210,72 +234,156 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  
-
-  void onSuggestionSelected(String placeId, String description) async {
-    final placeDetails =
-        await fetchPlaceDetails(placeId); // ดึงรายละเอียดสถานที่
-    _moveCameraToPlace(
-        placeDetails['lat'], placeDetails['lng']); // ย้ายกล้องไปยังสถานที่
-
-    setState(() {
-      selectedPlace = description; // แสดงชื่อสถานที่ที่เลือก
-      // คำนวณและแสดงระยะทางและเวลาเดินทาง
-    });
-  }
-Map<String, List<Map<String, dynamic>>> _searchCache = {};
-
-Future<void> _fetchPlaceSuggestions(String query) async {
-  if (query.isEmpty || query.length < 3) {
-    setState(() {
-      _suggestions.clear();
-    });
-    return;
-  }
-  
-  // ถ้าคำค้นหาอยู่ในแคชแล้ว ใช้ข้อมูลจากแคช
-  if (_searchCache.containsKey(query)) {
-    setState(() {
-      _suggestions = _searchCache[query]!;
-    });
-    return;
-  }
-
-  if (_currentPosition == null) {
-    print("Current position is null");
-    return;
-  }
-
-  final url =
-      'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
-
+void onSuggestionSelected(String placeId, String description) async {
   try {
-    final response = await http.get(Uri.parse(url));
-    if (response.statusCode == 200) {
-      final jsonResponse = json.decode(response.body);
-      final predictions = jsonResponse['predictions'] as List;
+    // Fetch details of the selected place from Google API or Firestore
+    final placeDetails = await fetchPlaceDetails(placeId);
 
-      // แปลงผลลัพธ์จาก Autocomplete API เป็นรูปแบบที่ต้องการ
-      final List<Map<String, dynamic>> fetchedSuggestions = predictions.map((prediction) {
-        return {
-          'description': prediction['description'],
-          'place_id': prediction['place_id'],
-        };
-      }).toList();
+    // Check if the placeDetails contains valid lat and lng
+    if (placeDetails.isNotEmpty && placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
+      double lat = placeDetails['lat'];
+      double lng = placeDetails['lng'];
 
-      // อัปเดตแคชการค้นหาด้วยผลลัพธ์ใหม่
+      // Move the camera to the selected place
+      await _moveCameraToPlace(lat, lng);
+
+      // Show place details immediately after moving the camera
+      final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+
       setState(() {
-        _suggestions = fetchedSuggestions;
-        _searchCache[query] = fetchedSuggestions;  // เก็บผลลัพธ์ในแคช
+        selectedPlace = description; // Set selected place for UI updates
+        _isSearching = false; // Close the search bar
+        _searchController.clear(); // Clear search input
       });
+
+      // Call a function to show place details (either with a modal or info window)
+      _showPlaceDetails(placeId, placeLatLng, placeDetails);
+      
+      // Save the search to history
+      await _saveSearchHistory(description);
     } else {
-      print('Error fetching suggestions: ${response.statusCode}');
+      print("Place details not found or invalid.");
     }
   } catch (e) {
-    print('Error fetching suggestions: $e');
+    print("Error selecting suggestion: $e");
   }
 }
 
+
+  void _handleSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      if (query.isNotEmpty) {
+        // ดึงข้อมูลจาก Google Autocomplete API
+        await _fetchPlaceSuggestions(query);
+        // ดึงข้อมูลจาก Firestore
+        final firestoreSuggestions = _searchInFirestore(query);
+
+        setState(() {
+          // รวมผลลัพธ์จาก Google และ Firestore
+          _suggestions = [
+            ..._suggestions,
+            ...firestoreSuggestions,
+          ];
+          _loadSearchHistory();
+        });
+      } else {
+        setState(() {
+          _suggestions.clear();
+          _resetSearchResults();
+        });
+      }
+    });
+  }
+
+// ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
+  List<Map<String, dynamic>> _searchInFirestore(String query) {
+    return _originalPlaces.where((place) {
+      final matchQuery =
+          place['name'].toString().toLowerCase().contains(query.toLowerCase());
+      return matchQuery;
+    }).toList();
+  }
+
+  Map<String, List<Map<String, dynamic>>> _searchCache = {};
+
+  Future<void> _fetchPlaceSuggestions(String query) async {
+    if (query.isEmpty || query.length < 3) {
+      setState(() {
+        _suggestions.clear();
+      });
+      return;
+    }
+
+    // ถ้าคำค้นหาอยู่ในแคชแล้ว ใช้ข้อมูลจากแคช
+    if (_searchCache.containsKey(query)) {
+      setState(() {
+        _suggestions = _searchCache[query]!;
+      });
+      return;
+    }
+
+    if (_currentPosition == null) {
+      print("Current position is null");
+      return;
+    }
+
+    // URL สำหรับ Google API
+    final googleApiUrl =
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
+
+    List<Map<String, dynamic>> fetchedSuggestions = [];
+
+    try {
+      // 1. ดึงข้อมูลจาก Google Places API
+      final googleResponse = await http.get(Uri.parse(googleApiUrl));
+      if (googleResponse.statusCode == 200) {
+        final jsonResponse = json.decode(googleResponse.body);
+        final predictions = jsonResponse['predictions'] as List;
+
+        // แปลงผลลัพธ์จาก Google API เป็นรูปแบบที่ต้องการ
+        fetchedSuggestions.addAll(predictions.map((prediction) {
+          return {
+            'description': prediction['description'],
+            'place_id': prediction['place_id'],
+            'source': 'google',
+          };
+        }).toList());
+      } else {
+        print(
+            'Error fetching suggestions from Google: ${googleResponse.statusCode}');
+      }
+
+      // 2. ดึงข้อมูลจาก Firestore
+      final firestorePlaces = await FirebaseFirestore.instance
+          .collection('places')
+          .where('name', isGreaterThanOrEqualTo: query)
+          .where('name',
+              isLessThanOrEqualTo:
+                  query + '\uf8ff') // สำหรับการค้นหาที่ตรงกับคำที่พิมพ์
+          .get();
+
+      // เพิ่มข้อมูลจาก Firestore ใน fetchedSuggestions
+      fetchedSuggestions.addAll(firestorePlaces.docs.map((doc) {
+        return {
+          'name': doc['name'],
+          'place_id': doc.id,
+          'lat': doc['lat'],
+          'lng': doc['lng'],
+          'source': 'firestore',
+        };
+      }).toList());
+
+      // เก็บผลลัพธ์ลงในแคชและอัปเดต UI
+      setState(() {
+        _suggestions = fetchedSuggestions;
+        _searchCache[query] = fetchedSuggestions; // เก็บผลลัพธ์ในแคช
+      });
+    } catch (e) {
+      print('Error fetching suggestions: $e');
+      setState(() => _suggestions.clear());
+    }
+  }
 
   void _showFilterDialog() {
     _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
@@ -531,6 +639,11 @@ Future<void> _fetchPlaceSuggestions(String query) async {
         final jsonResponse = json.decode(response.body);
         final result = jsonResponse['result'];
 
+        if (result == null) {
+          print('Result is null.');
+          return {}; // คืนค่า Map ว่างหาก result เป็น null
+        }
+
         return {
           'name': result['name'] ?? 'No name available',
           'address': result['formatted_address'] ?? 'No address available',
@@ -683,6 +796,7 @@ Future<void> _fetchPlaceSuggestions(String query) async {
     setState(() {
       _places.addAll(allPlaces);
       _originalPlaces = List.from(_places);
+      _sortPlacesByDistance();
     });
   }
 
@@ -1600,6 +1714,39 @@ Future<void> _fetchPlaceSuggestions(String query) async {
     );
   }
 
+  Future<List<Map<String, dynamic>>> _calculateAndSortPlacesByDistance() async {
+    List<Map<String, dynamic>> suggestionsWithDistance = [];
+
+    for (var suggestion in _suggestions) {
+      final placeId = suggestion['place_id'];
+      final placeDetails = await fetchPlaceDetails(placeId);
+      final lat = placeDetails['lat'];
+      final lng = placeDetails['lng'];
+
+      if (lat != null && lng != null) {
+        // คำนวณระยะทาง
+        String distance = await _getDistance(lat, lng);
+        suggestionsWithDistance.add({
+          ...suggestion,
+          'lat': lat,
+          'lng': lng,
+          'distance': distance, // เพิ่มระยะทางลงในรายการ
+        });
+      }
+    }
+
+    // จัดเรียงตามระยะทางจากใกล้ไปไกล (สมมติว่าระยะทางเป็นตัวเลขเช่น '5.2 km')
+    suggestionsWithDistance.sort((a, b) {
+      double distanceA =
+          double.tryParse(a['distance']?.split(' ')[0] ?? '0') ?? 0;
+      double distanceB =
+          double.tryParse(b['distance']?.split(' ')[0] ?? '0') ?? 0;
+      return distanceA.compareTo(distanceB); // เรียงจากใกล้ไปไกล
+    });
+
+    return suggestionsWithDistance;
+  }
+
   void _clearRoute() {
     setState(() {
       _polylines.clear();
@@ -1827,30 +1974,67 @@ Future<void> _fetchPlaceSuggestions(String query) async {
                   zoomControlsEnabled: false,
                   myLocationEnabled: true,
                 ),
-                // Search Bar UI
-                Positioned(
-                  top: 16,
-                  left: 16,
-                  right: 16,
-                  child: Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(30.0),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.2),
-                                    blurRadius: 8.0,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
-                              ),
+
+                // In your existing AnimatedPositioned widget for the search bar
+                AnimatedPositioned(
+                  duration: Duration(milliseconds: 500),
+                  curve: Curves.easeInOut,
+                  top: _isSearching ? 0 : 16,
+                  left: _isSearching ? 0 : 16,
+                  right: _isSearching ? 0 : 16,
+                  bottom: _isSearching
+                      ? 0
+                      : MediaQuery.of(context).size.height - 50,
+                  child: Material(
+                    elevation: 4,
+                    shape: RoundedRectangleBorder(
+                      borderRadius:
+                          BorderRadius.circular(_isSearching ? 0 : 30),
+                    ),
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 20),
+                      child: TextField(
+                        controller: _searchController,
+                        autofocus: true,
+                        decoration: InputDecoration(
+                          hintText: 'Search Places...',
+                          border: InputBorder.none,
+                        ),
+                        onTap: () => setState(() => _isSearching = true),
+                        onChanged: _handleSearchChanged,
+                      ),
+                    ),
+                  ),
+                ),
+// Search Bar UI with Expandable and Autocomplete Features
+                AnimatedPositioned(
+                  duration: Duration(milliseconds: 500),
+                  curve: Curves.easeInOut,
+                  top: _isSearching ? 0 : 16,
+                  left: _isSearching ? 0 : 16,
+                  right: _isSearching ? 0 : 16,
+                  child: Hero(
+                    tag: 'searchBar',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(30.0),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.2),
+                              blurRadius: 8.0,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
                               child: TextField(
                                 controller: _searchController,
+                                autofocus: _isSearching,
                                 decoration: InputDecoration(
                                   hintText: 'Search Places...',
                                   filled: true,
@@ -1869,6 +2053,12 @@ Future<void> _fetchPlaceSuggestions(String query) async {
                                         )
                                       : null,
                                 ),
+                                onTap: () {
+                                  setState(() {
+                                    _isSearching = true; // Expand SearchBar
+                                    _suggestions.clear();
+                                  });
+                                },
                                 onChanged: (query) {
                                   if (query.isNotEmpty) {
                                     _fetchPlaceSuggestions(query);
@@ -1882,115 +2072,114 @@ Future<void> _fetchPlaceSuggestions(String query) async {
                                     });
                                   }
                                 },
-                                onTap: () {
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                if (_searchController.text.isNotEmpty) {
+                                  _saveSearchHistory(_searchController.text);
+                                  _onSearchChanged(_searchController.text);
+                                  if (_places.isNotEmpty) {
+                                    _moveCameraToPlace(
+                                      _places.first['lat'],
+                                      _places.first['lng'],
+                                    );
+                                  }
                                   setState(() {
-                                    _suggestions.clear();
-                                  });
-                                },
-                                onEditingComplete: () {
-                                  setState(() {
-                                    _suggestions.clear();
                                     _isSearching = false;
                                   });
-                                },
+                                }
+                              },
+                              child: Container(
+                                padding: EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  borderRadius: BorderRadius.circular(30.0),
+                                ),
+                                child: Icon(Icons.search, color: Colors.white),
                               ),
                             ),
-                          ),
-                          SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () {
-                              if (_searchController.text.isNotEmpty) {
-                                _saveSearchHistory(_searchController.text);
-                                _onSearchChanged(_searchController.text);
-                                _moveCameraToPlace(
-                                  _places.first['lat'],
-                                  _places.first['lng'],
-                                );
-                                setState(() {
-                                  _isSearching = false;
-                                });
-                              }
-                            },
-                            child: Container(
-                              padding: EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.blue,
-                                borderRadius: BorderRadius.circular(30.0),
-                              ),
-                              child: Icon(Icons.search, color: Colors.white),
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      if (_searchHistory.isNotEmpty)
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: _clearSearchHistory,
-                            child: Text(
-                              'Clear Search History',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                          ),
-                        ),
-                      if (_isSearching && _suggestions.isNotEmpty)
-                        Container(
-                          constraints: BoxConstraints(
-                              maxHeight:
-                                  200), // จำกัดความสูงเพื่อป้องกันการยืดเกิน
-                          color: Colors.white,
-                          child: ListView.builder(
-                            shrinkWrap:
-                                true, // ทำให้ ListView ไม่ขยายเกินขนาดเนื้อหาที่มี
-                            itemCount:
-                                _suggestions.length, // จำนวนรายการของคำแนะนำ
-                            itemBuilder: (context, index) {
-                              final suggestion = _suggestions[index];
-                              final lat = suggestion['lat'];
-                              final lng = suggestion['lng'];
-
-                              if (lat != null && lng != null) {
-                                return FutureBuilder<String>(
-                                  future:
-                                      _getDistance(lat, lng), // คำนวณระยะทาง
-                                  builder: (context, snapshot) {
-                                    String distanceText =
-                                        snapshot.data ?? 'Calculating...';
-
-                                    return ListTile(
-                                      title: Text(suggestion['description']),
-                                      subtitle: Text(
-                                          'Distance: $distanceText'), // แสดงผลระยะทาง
-                                      onTap: () async {
-                                        final placeDetails =
-                                            await fetchPlaceDetails(
-                                                suggestion['place_id']);
-                                        _moveCameraToPlace(placeDetails['lat'],
-                                            placeDetails['lng']);
-                                        _saveSearchHistory(
-                                            suggestion['description']);
-                                        setState(() {
-                                          _searchController.text =
-                                              suggestion['description'];
-                                          _isSearching = false;
-                                          _suggestions.clear();
-                                        });
-                                      },
-                                    );
-                                  },
-                                );
-                              } else {
-                                return ListTile(
-                                  title: Text(suggestion['description']),
-                                  subtitle: Text('Distance: N/A'),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                    ],
+                    ),
                   ),
                 ),
+
+// List of search results and suggestions with distance calculation
+                if (_isSearching && _suggestions.isNotEmpty)
+                  Positioned(
+                    top: 80, // Position list below the search bar
+                    left: 16,
+                    right: 16,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: FutureBuilder<List<Map<String, dynamic>>>(
+                        future:
+                            _calculateAndSortPlacesByDistance(), // เรียกฟังก์ชันเพื่อคำนวณและเรียงลำดับสถานที่
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(child: CircularProgressIndicator());
+                          } else if (snapshot.hasData) {
+                            List<Map<String, dynamic>> sortedSuggestions =
+                                snapshot.data!;
+
+                            return Container(
+                              height: 300,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black26,
+                                    blurRadius: 10,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: ListView.builder(
+                                itemCount: sortedSuggestions.length,
+                                itemBuilder: (context, index) {
+                                  final suggestion = sortedSuggestions[index];
+                                  final placeId = suggestion['place_id'];
+                                  final distance = suggestion['distance'] ??
+                                      'Unknown distance'; // ระยะทางที่คำนวณแล้ว
+
+                                  return ListTile(
+                                    title: Text(suggestion['description'] ??
+                                        suggestion['name']),
+                                    subtitle: Text(
+                                        'Distance: ${distance ?? 'Calculating...'}'),
+                                    onTap: () async {
+                                      final placeDetails =
+                                          await fetchPlaceDetails(placeId);
+                                      _moveCameraToPlace(placeDetails['lat'],
+                                          placeDetails['lng']);
+                                      _saveSearchHistory(
+                                          suggestion['description'] ??
+                                              suggestion['name']);
+                                      setState(() {
+                                        _searchController.text =
+                                            suggestion['description'] ??
+                                                suggestion['name'];
+                                        _isSearching = false;
+                                        _suggestions.clear();
+                                      });
+                                    },
+                                  );
+                                },
+                              ),
+                            );
+                          } else {
+                            return Text('Error calculating distances');
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+
                 Positioned(
                   bottom: 100,
                   right: 16,
