@@ -48,6 +48,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? _tempSelectedFilter;
   String? selectedPlace;
   List<Map<String, dynamic>> _suggestions = [];
+  final suggestions = ValueNotifier<List<Map<String, dynamic>>>([]);
 
   Set<gms.Polyline> _polylines = {};
   gms.PolylineId polylineId = gms.PolylineId('route');
@@ -172,7 +173,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  void _searchAllPlaces(String query) async {
+  Future<void> _searchAllPlaces(String query) async {
     try {
       // ดึงข้อมูลสถานที่จาก Google API
       await _fetchPlaces();
@@ -234,46 +235,49 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-void onSuggestionSelected(String placeId, String description) async {
-  try {
-    // Fetch details of the selected place from Google API or Firestore
-    final placeDetails = await fetchPlaceDetails(placeId);
+  void onSuggestionSelected(String placeId, String description) async {
+    try {
+      // Fetch details of the selected place from Google API or Firestore
+      final placeDetails = await fetchPlaceDetails(placeId);
 
-    // Check if the placeDetails contains valid lat and lng
-    if (placeDetails.isNotEmpty && placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
-      double lat = placeDetails['lat'];
-      double lng = placeDetails['lng'];
+      // Check if the placeDetails contains valid lat and lng
+      if (placeDetails.isNotEmpty &&
+          placeDetails.containsKey('lat') &&
+          placeDetails.containsKey('lng')) {
+        double lat = placeDetails['lat'];
+        double lng = placeDetails['lng'];
 
-      // Move the camera to the selected place
-      await _moveCameraToPlace(lat, lng);
+        // Move the camera to the selected place
+        await _moveCameraToPlace(lat, lng);
 
-      // Show place details immediately after moving the camera
-      final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+        // Show place details immediately after moving the camera
+        final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
 
-      setState(() {
-        selectedPlace = description; // Set selected place for UI updates
-        _isSearching = false; // Close the search bar
-        _searchController.clear(); // Clear search input
-      });
+        setState(() {
+          selectedPlace = description; // Set selected place for UI updates
+          _isSearching = false; // Close the search bar
+          _searchController.clear(); // Clear search input
+        });
 
-      // Call a function to show place details (either with a modal or info window)
-      _showPlaceDetails(placeId, placeLatLng, placeDetails);
-      
-      // Save the search to history
-      await _saveSearchHistory(description);
-    } else {
-      print("Place details not found or invalid.");
+        // Call a function to show place details (either with a modal or info window)
+        _showPlaceDetails(placeId, placeLatLng, placeDetails);
+
+        // Save the search to history
+        await _saveSearchHistory(description);
+      } else {
+        print("Place details not found or invalid.");
+      }
+    } catch (e) {
+      print("Error selecting suggestion: $e");
     }
-  } catch (e) {
-    print("Error selecting suggestion: $e");
   }
-}
-
 
   void _handleSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       if (query.isNotEmpty) {
+
+        await _searchAllPlaces(query);
         // ดึงข้อมูลจาก Google Autocomplete API
         await _fetchPlaceSuggestions(query);
         // ดึงข้อมูลจาก Firestore
@@ -315,33 +319,24 @@ void onSuggestionSelected(String placeId, String description) async {
       return;
     }
 
-    // ถ้าคำค้นหาอยู่ในแคชแล้ว ใช้ข้อมูลจากแคช
-    if (_searchCache.containsKey(query)) {
-      setState(() {
-        _suggestions = _searchCache[query]!;
-      });
-      return;
-    }
-
+    // Ensure there's a current position before fetching
     if (_currentPosition == null) {
       print("Current position is null");
       return;
     }
 
-    // URL สำหรับ Google API
     final googleApiUrl =
         'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
 
     List<Map<String, dynamic>> fetchedSuggestions = [];
 
     try {
-      // 1. ดึงข้อมูลจาก Google Places API
+      // 1. Fetch data from Google Places API
       final googleResponse = await http.get(Uri.parse(googleApiUrl));
       if (googleResponse.statusCode == 200) {
         final jsonResponse = json.decode(googleResponse.body);
         final predictions = jsonResponse['predictions'] as List;
 
-        // แปลงผลลัพธ์จาก Google API เป็นรูปแบบที่ต้องการ
         fetchedSuggestions.addAll(predictions.map((prediction) {
           return {
             'description': prediction['description'],
@@ -354,34 +349,33 @@ void onSuggestionSelected(String placeId, String description) async {
             'Error fetching suggestions from Google: ${googleResponse.statusCode}');
       }
 
-      // 2. ดึงข้อมูลจาก Firestore
+      // 2. Fetch data from Firestore
       final firestorePlaces = await FirebaseFirestore.instance
           .collection('places')
           .where('name', isGreaterThanOrEqualTo: query)
-          .where('name',
-              isLessThanOrEqualTo:
-                  query + '\uf8ff') // สำหรับการค้นหาที่ตรงกับคำที่พิมพ์
+          .where('name', isLessThanOrEqualTo: query + '\uf8ff')
           .get();
 
-      // เพิ่มข้อมูลจาก Firestore ใน fetchedSuggestions
       fetchedSuggestions.addAll(firestorePlaces.docs.map((doc) {
         return {
-          'name': doc['name'],
+          'description': doc.data()['name'], // ensure the keys are consistent
           'place_id': doc.id,
-          'lat': doc['lat'],
-          'lng': doc['lng'],
+          'lat': doc.data()['lat'],
+          'lng': doc.data()['lng'],
           'source': 'firestore',
         };
       }).toList());
 
-      // เก็บผลลัพธ์ลงในแคชและอัปเดต UI
+      // Update UI
       setState(() {
         _suggestions = fetchedSuggestions;
-        _searchCache[query] = fetchedSuggestions; // เก็บผลลัพธ์ในแคช
+        _searchCache[query] = fetchedSuggestions; // Cache results
       });
     } catch (e) {
       print('Error fetching suggestions: $e');
-      setState(() => _suggestions.clear());
+      setState(() {
+        _suggestions.clear();
+      });
     }
   }
 
@@ -1929,6 +1923,18 @@ void onSuggestionSelected(String placeId, String description) async {
     );
   }
 
+  void _selectSuggestion(Map<String, dynamic> suggestion) {
+    // Function to handle the selection of a suggestion
+    print("Selected Place: ${suggestion['description']}");
+    _moveCameraToPlace(suggestion['lat'], suggestion['lng']);
+    _saveSearchHistory(suggestion['description'] ?? suggestion['name']);
+    setState(() {
+      _searchController.text = suggestion['description'] ?? suggestion['name'];
+      _isSearching = false;
+      _suggestions.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2006,7 +2012,7 @@ void onSuggestionSelected(String placeId, String description) async {
                     ),
                   ),
                 ),
-// Search Bar UI with Expandable and Autocomplete Features
+
                 AnimatedPositioned(
                   duration: Duration(milliseconds: 500),
                   curve: Curves.easeInOut,
@@ -2055,7 +2061,7 @@ void onSuggestionSelected(String placeId, String description) async {
                                 ),
                                 onTap: () {
                                   setState(() {
-                                    _isSearching = true; // Expand SearchBar
+                                    _isSearching = true;
                                     _suggestions.clear();
                                   });
                                 },
@@ -2107,7 +2113,6 @@ void onSuggestionSelected(String placeId, String description) async {
                   ),
                 ),
 
-// List of search results and suggestions with distance calculation
                 if (_isSearching && _suggestions.isNotEmpty)
                   Positioned(
                     top: 80, // Position list below the search bar
@@ -2116,8 +2121,7 @@ void onSuggestionSelected(String placeId, String description) async {
                     child: Material(
                       color: Colors.transparent,
                       child: FutureBuilder<List<Map<String, dynamic>>>(
-                        future:
-                            _calculateAndSortPlacesByDistance(), // เรียกฟังก์ชันเพื่อคำนวณและเรียงลำดับสถานที่
+                        future: _calculateAndSortPlacesByDistance(),
                         builder: (context, snapshot) {
                           if (snapshot.connectionState ==
                               ConnectionState.waiting) {
@@ -2145,7 +2149,7 @@ void onSuggestionSelected(String placeId, String description) async {
                                   final suggestion = sortedSuggestions[index];
                                   final placeId = suggestion['place_id'];
                                   final distance = suggestion['distance'] ??
-                                      'Unknown distance'; // ระยะทางที่คำนวณแล้ว
+                                      'Unknown distance';
 
                                   return ListTile(
                                     title: Text(suggestion['description'] ??
@@ -2179,7 +2183,7 @@ void onSuggestionSelected(String placeId, String description) async {
                       ),
                     ),
                   ),
-
+                // Floating Action Buttons
                 Positioned(
                   bottom: 100,
                   right: 16,
@@ -2189,19 +2193,19 @@ void onSuggestionSelected(String placeId, String description) async {
                   ),
                 ),
                 Positioned(
-                  top: 80,
-                  right: 16,
-                  child: FloatingActionButton(
-                    onPressed: _showFilterDialog,
-                    child: Icon(Icons.filter_list),
-                  ),
-                ),
-                Positioned(
                   bottom: 160,
                   right: 16,
                   child: FloatingActionButton(
                     onPressed: _goToCurrentLocation,
                     child: Icon(Icons.my_location),
+                  ),
+                ),
+                Positioned(
+                  top: 80,
+                  right: 16,
+                  child: FloatingActionButton(
+                    onPressed: _showFilterDialog,
+                    child: Icon(Icons.filter_list),
                   ),
                 ),
                 if (_isNavigating)
