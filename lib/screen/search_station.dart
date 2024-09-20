@@ -1,5 +1,4 @@
 import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -38,7 +37,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   TextEditingController _searchController = TextEditingController();
   bool _isLoadingLocation = true;
   bool _isNavigating = false;
-  bool _isSearching = false;
   Timer? _debounce;
   String? _distanceText;
   String? _durationText;
@@ -49,6 +47,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? selectedPlace;
   List<Map<String, dynamic>> _suggestions = [];
   final suggestions = ValueNotifier<List<Map<String, dynamic>>>([]);
+  final ValueNotifier<List<Map<String, dynamic>>> suggestionsNotifier = ValueNotifier([]);
+
 
   Set<gms.Polyline> _polylines = {};
   gms.PolylineId polylineId = gms.PolylineId('route');
@@ -86,14 +86,13 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     await prefs.setStringList('search_history', _searchHistory);
   }
 
-  // ลบประวัติการค้นหาทั้งหมด
-  void _clearSearchHistory() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.remove('search_history');
-    setState(() {
-      _searchHistory.clear();
-    });
-  }
+void _clearSearchHistory(String historyItem) async {
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  setState(() {
+    _searchHistory.removeWhere((item) => item == historyItem);
+    prefs.setStringList('search_history', _searchHistory);
+  });
+}
 
   void _resetSearchResults() {
     setState(() {
@@ -124,12 +123,12 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-  Future<void> _moveCameraToPlace(double lat, double lng) async {
-    final gms.GoogleMapController controller =
-        await _controllerCompleter.future;
-    gms.LatLng position = gms.LatLng(lat, lng);
-    controller.animateCamera(CameraUpdate.newLatLngZoom(position, 14.0));
-  }
+Future<void> _moveCameraToPlace(double lat, double lng) async {
+  final gms.GoogleMapController controller = await _controllerCompleter.future;
+  gms.LatLng position = gms.LatLng(lat, lng);
+  print("Moving camera to position: $lat, $lng");
+  controller.animateCamera(CameraUpdate.newLatLngZoom(position, 18.0)); // ซูมเข้า
+}
 
 // // ดึง userId จาก Firebase Authentication
 //   Future<String?> _getUserId() async {
@@ -235,62 +234,50 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  void onSuggestionSelected(String placeId, String description) async {
-    try {
-      // Fetch details of the selected place from Google API or Firestore
-      final placeDetails = await fetchPlaceDetails(placeId);
+Future<void> onSuggestionSelected(String placeId, String description) async {
+  try {
+    // Fetch details of the selected place from Google API or Firestore
+    final placeDetails = await fetchPlaceDetails(placeId);
+    print("Fetched place details for placeId: $placeId");
 
-      // Check if the placeDetails contains valid lat and lng
-      if (placeDetails.isNotEmpty &&
-          placeDetails.containsKey('lat') &&
-          placeDetails.containsKey('lng')) {
-        double lat = placeDetails['lat'];
-        double lng = placeDetails['lng'];
+    // Check if the placeDetails contains valid lat and lng
+    if (placeDetails.isNotEmpty &&
+        placeDetails.containsKey('lat') &&
+        placeDetails.containsKey('lng')) {
+      double lat = placeDetails['lat'];
+      double lng = placeDetails['lng'];
 
-        // Move the camera to the selected place
-        await _moveCameraToPlace(lat, lng);
+      // Move the camera to the selected place
+      await _moveCameraToPlace(lat, lng);
+      print("Moved camera to place: $lat, $lng");
 
-        // Show place details immediately after moving the camera
-        final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+      // Show place details immediately after moving the camera
+      final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+      _showPlaceDetails(placeId, placeLatLng, placeDetails);
 
-        setState(() {
-          selectedPlace = description; // Set selected place for UI updates
-          _isSearching = false; // Close the search bar
-          _searchController.clear(); // Clear search input
-        });
-
-        // Call a function to show place details (either with a modal or info window)
-        _showPlaceDetails(placeId, placeLatLng, placeDetails);
-
-        // Save the search to history
-        await _saveSearchHistory(description);
-      } else {
-        print("Place details not found or invalid.");
-      }
-    } catch (e) {
-      print("Error selecting suggestion: $e");
+      // Save the search to history
+      await _saveSearchHistory(description);
+      print("Saved search history for: $description");
+    } else {
+      print("Place details not found or invalid.");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Place details not found or invalid.')),
+      );
     }
+  } catch (e) {
+    print("Error selecting suggestion: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error selecting suggestion: $e')),
+    );
   }
+}
+
 
   void _handleSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), () async {
       if (query.isNotEmpty) {
-
-        await _searchAllPlaces(query);
-        // ดึงข้อมูลจาก Google Autocomplete API
         await _fetchPlaceSuggestions(query);
-        // ดึงข้อมูลจาก Firestore
-        final firestoreSuggestions = _searchInFirestore(query);
-
-        setState(() {
-          // รวมผลลัพธ์จาก Google และ Firestore
-          _suggestions = [
-            ..._suggestions,
-            ...firestoreSuggestions,
-          ];
-          _loadSearchHistory();
-        });
       } else {
         setState(() {
           _suggestions.clear();
@@ -300,84 +287,93 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-// ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
-  List<Map<String, dynamic>> _searchInFirestore(String query) {
-    return _originalPlaces.where((place) {
-      final matchQuery =
-          place['name'].toString().toLowerCase().contains(query.toLowerCase());
-      return matchQuery;
-    }).toList();
-  }
+// // ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
+//   List<Map<String, dynamic>> _searchInFirestore(String query) {
+//     return _originalPlaces.where((place) {
+//       final matchQuery =
+//           place['name'].toString().toLowerCase().contains(query.toLowerCase());
+//       return matchQuery;
+//     }).toList();
+//   }
 
   Map<String, List<Map<String, dynamic>>> _searchCache = {};
 
-  Future<void> _fetchPlaceSuggestions(String query) async {
-    if (query.isEmpty || query.length < 3) {
-      setState(() {
-        _suggestions.clear();
-      });
-      return;
-    }
+ Future<void> _fetchPlaceSuggestions(String query) async {
+  print("Fetching place suggestions for query: $query");
+  if (_searchCache.containsKey(query)) {
+    suggestionsNotifier.value = _searchCache[query]!;
+    print("Loaded suggestions from cache");
+    return;
+  }
 
-    // Ensure there's a current position before fetching
-    if (_currentPosition == null) {
-      print("Current position is null");
-      return;
-    }
+  if (_currentPosition == null) {
+    print("Current position is null");
+    return;
+  }
+
+  try {
+    await _loadPlacesFromFirestore();
+    print("Loaded places from Firestore");
+
+    List<Map<String, dynamic>> fetchedSuggestions = _places.where((place) {
+      final name = place['name']?.toString().toLowerCase() ?? '';
+      return name.contains(query.toLowerCase());
+    }).toList();
+
+    print("Fetched ${fetchedSuggestions.length} suggestions from Firestore");
 
     final googleApiUrl =
         'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
 
-    List<Map<String, dynamic>> fetchedSuggestions = [];
+    final googleResponse = await http.get(Uri.parse(googleApiUrl));
+    if (googleResponse.statusCode == 200) {
+      final jsonResponse = json.decode(googleResponse.body);
+      final predictions = jsonResponse['predictions'] as List;
 
-    try {
-      // 1. Fetch data from Google Places API
-      final googleResponse = await http.get(Uri.parse(googleApiUrl));
-      if (googleResponse.statusCode == 200) {
-        final jsonResponse = json.decode(googleResponse.body);
-        final predictions = jsonResponse['predictions'] as List;
-
-        fetchedSuggestions.addAll(predictions.map((prediction) {
-          return {
-            'description': prediction['description'],
-            'place_id': prediction['place_id'],
-            'source': 'google',
-          };
-        }).toList());
-      } else {
-        print(
-            'Error fetching suggestions from Google: ${googleResponse.statusCode}');
-      }
-
-      // 2. Fetch data from Firestore
-      final firestorePlaces = await FirebaseFirestore.instance
-          .collection('places')
-          .where('name', isGreaterThanOrEqualTo: query)
-          .where('name', isLessThanOrEqualTo: query + '\uf8ff')
-          .get();
-
-      fetchedSuggestions.addAll(firestorePlaces.docs.map((doc) {
+      fetchedSuggestions.addAll(predictions.map((prediction) {
         return {
-          'description': doc.data()['name'], // ensure the keys are consistent
-          'place_id': doc.id,
-          'lat': doc.data()['lat'],
-          'lng': doc.data()['lng'],
-          'source': 'firestore',
+          'description': prediction['description'],
+          'place_id': prediction['place_id'],
+          'source': 'google',
         };
       }).toList());
 
-      // Update UI
-      setState(() {
-        _suggestions = fetchedSuggestions;
-        _searchCache[query] = fetchedSuggestions; // Cache results
-      });
-    } catch (e) {
-      print('Error fetching suggestions: $e');
-      setState(() {
-        _suggestions.clear();
-      });
+      print("Fetched ${predictions.length} suggestions from Google Places API");
+    } else {
+      print("Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
     }
+
+    // คำนวณระยะทางสำหรับแต่ละ Suggestion
+    List<Map<String, dynamic>> processedSuggestions = [];
+    for (var suggestion in fetchedSuggestions) {
+      if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
+        String distance = await _getDistance(suggestion['lat'], suggestion['lng']);
+        suggestion['distance'] = distance;
+        processedSuggestions.add(suggestion);
+      } else if (suggestion['source'] == 'google') {
+        final placeDetails = await fetchPlaceDetails(suggestion['place_id']);
+        if (placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
+          String distance = await _getDistance(placeDetails['lat'], placeDetails['lng']);
+          suggestion['lat'] = placeDetails['lat'];
+          suggestion['lng'] = placeDetails['lng'];
+          suggestion['distance'] = distance;
+          processedSuggestions.add(suggestion);
+        }
+      }
+    }
+
+    print("Setting suggestions and caching them");
+    _searchCache[query] = processedSuggestions; // แคชผลลัพธ์
+    suggestionsNotifier.value = processedSuggestions;
+  } catch (e) {
+    print('Error fetching suggestions: $e');
+    suggestionsNotifier.value = [];
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error fetching suggestions: $e')),
+    );
   }
+}
+
 
   void _showFilterDialog() {
     _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
@@ -490,6 +486,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           };
         }).toList());
       });
+       print("Loaded ${evStationsSnapshot.docs.length} EV stations from Firestore"); // เพิ่มบรรทัดนี้
 
       // ดึงข้อมูลจาก places
       QuerySnapshot placesSnapshot =
@@ -508,6 +505,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           };
         }).toList());
       });
+
+      print("Loaded ${placesSnapshot.docs.length} places from Firestore");
     } catch (e) {
       print('Error loading places: $e');
     }
@@ -1579,7 +1578,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                                   return Padding(
                                     padding: const EdgeInsets.all(4.0),
                                     child: Image.network(
-                                      'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo['photo_reference']}&key=YOUR_API_KEY',
+                                      'https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference=${photo['photo_reference']}&key=$_apiKey',
                                       width: 200,
                                       height: 150,
                                       fit: BoxFit.cover,
@@ -1729,7 +1728,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       }
     }
 
-    // จัดเรียงตามระยะทางจากใกล้ไปไกล (สมมติว่าระยะทางเป็นตัวเลขเช่น '5.2 km')
+    // จัดเรียงตามระยะทางจากใกล้ไปไกล
     suggestionsWithDistance.sort((a, b) {
       double distanceA =
           double.tryParse(a['distance']?.split(' ')[0] ?? '0') ?? 0;
@@ -1749,6 +1748,98 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       _durationText = null;
     });
   }
+
+void _showSearchScreen(BuildContext context) async {
+  final selectedPlace = await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (context) => Scaffold(
+        appBar: AppBar(
+          title: Text("Search"),
+          automaticallyImplyLeading: false, // ไม่แสดงปุ่มย้อนกลับ
+        ),
+        body: Column(
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: TextField(
+                autofocus: true,
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search Places...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[200],
+                  prefixIcon: Icon(Icons.search),
+                  suffixIcon: IconButton(
+                    icon: Icon(Icons.clear),
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {
+                        _suggestions.clear();
+                      });
+                      Navigator.pop(context); // ปิดหน้าค้นหา
+                    },
+                  ),
+                ),
+                onChanged: _handleSearchChanged,
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: _searchHistory.length + _suggestions.length,
+                itemBuilder: (context, index) {
+                  if (index < _searchHistory.length) {
+                    String historyItem = _searchHistory[index];
+                    return Column(
+                      children: [
+                        ListTile(
+                          title: Text(historyItem),
+                          trailing: IconButton(
+                            icon: Icon(Icons.delete),
+                            onPressed: () {
+                              _clearSearchHistory(historyItem);
+                            },
+                          ),
+                        ),
+                        Divider(),
+                      ],
+                    );
+                  } else {
+                    var suggestion =
+                        _suggestions[index - _searchHistory.length];
+                    return ListTile(
+                      title: Text(suggestion['description'] ?? 'Unknown'),
+                      subtitle: Text('Distance: ${suggestion['distance'] ?? 'Calculating...'}'),
+                      onTap: () {
+                        // ส่งข้อมูลสถานที่ที่ถูกเลือกกลับมายังหน้าหลัก
+                        Navigator.pop(context, suggestion);
+                      },
+                    );
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  if (selectedPlace != null) {
+    await onSuggestionSelected(
+      selectedPlace['place_id'],
+      selectedPlace['description'],
+    );
+  }
+}
+
+
+
+
+
 
   void _showAddPlaceDialog() {
     final nameController = TextEditingController();
@@ -1923,17 +2014,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     );
   }
 
-  void _selectSuggestion(Map<String, dynamic> suggestion) {
-    // Function to handle the selection of a suggestion
-    print("Selected Place: ${suggestion['description']}");
-    _moveCameraToPlace(suggestion['lat'], suggestion['lng']);
-    _saveSearchHistory(suggestion['description'] ?? suggestion['name']);
-    setState(() {
-      _searchController.text = suggestion['description'] ?? suggestion['name'];
-      _isSearching = false;
-      _suggestions.clear();
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -1981,209 +2061,242 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                   myLocationEnabled: true,
                 ),
 
-                // In your existing AnimatedPositioned widget for the search bar
-                AnimatedPositioned(
-                  duration: Duration(milliseconds: 500),
-                  curve: Curves.easeInOut,
-                  top: _isSearching ? 0 : 16,
-                  left: _isSearching ? 0 : 16,
-                  right: _isSearching ? 0 : 16,
-                  bottom: _isSearching
-                      ? 0
-                      : MediaQuery.of(context).size.height - 50,
-                  child: Material(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(_isSearching ? 0 : 30),
-                    ),
-                    child: Container(
-                      padding: EdgeInsets.symmetric(horizontal: 20),
-                      child: TextField(
-                        controller: _searchController,
-                        autofocus: true,
-                        decoration: InputDecoration(
-                          hintText: 'Search Places...',
-                          border: InputBorder.none,
-                        ),
-                        onTap: () => setState(() => _isSearching = true),
-                        onChanged: _handleSearchChanged,
-                      ),
-                    ),
-                  ),
-                ),
+                // // In your existing AnimatedPositioned widget for the search bar
+                // AnimatedPositioned(
+                //   duration: Duration(milliseconds: 500),
+                //   curve: Curves.easeInOut,
+                //   top: _isSearching ? 0 : 16,
+                //   left: _isSearching ? 0 : 16,
+                //   right: _isSearching ? 0 : 16,
+                //   bottom: _isSearching
+                //       ? 0
+                //       : MediaQuery.of(context).size.height - 50,
+                //   child: Material(
+                //     elevation: 4,
+                //     shape: RoundedRectangleBorder(
+                //       borderRadius:
+                //           BorderRadius.circular(_isSearching ? 0 : 30),
+                //     ),
+                //     child: Container(
+                //       padding: EdgeInsets.symmetric(horizontal: 20),
+                //       child: TextField(
+                //         controller: _searchController,
+                //         autofocus: true,
+                //         decoration: InputDecoration(
+                //           hintText: 'Search Places...',
+                //           border: InputBorder.none,
+                //         ),
+                //         onTap: () => setState(() => _isSearching = true),
+                //         onChanged: _handleSearchChanged,
+                //       ),
+                //     ),
+                //   ),
+                // ),
 
-                AnimatedPositioned(
-                  duration: Duration(milliseconds: 500),
-                  curve: Curves.easeInOut,
-                  top: _isSearching ? 0 : 16,
-                  left: _isSearching ? 0 : 16,
-                  right: _isSearching ? 0 : 16,
-                  child: Hero(
-                    tag: 'searchBar',
-                    child: Material(
-                      color: Colors.transparent,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(30.0),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 8.0,
-                              offset: Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _searchController,
-                                autofocus: _isSearching,
-                                decoration: InputDecoration(
-                                  hintText: 'Search Places...',
-                                  filled: true,
-                                  fillColor: Colors.white,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(30.0),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  prefixIcon: Icon(Icons.search),
-                                  suffixIcon: _searchController.text.isNotEmpty
-                                      ? IconButton(
-                                          icon: Icon(Icons.clear),
-                                          onPressed: () {
-                                            _clearSearch();
-                                          },
-                                        )
-                                      : null,
-                                ),
-                                onTap: () {
-                                  setState(() {
-                                    _isSearching = true;
-                                    _suggestions.clear();
-                                  });
-                                },
-                                onChanged: (query) {
-                                  if (query.isNotEmpty) {
-                                    _fetchPlaceSuggestions(query);
-                                    setState(() {
-                                      _isSearching = true;
-                                    });
-                                  } else {
-                                    setState(() {
-                                      _isSearching = false;
-                                      _suggestions.clear();
-                                    });
-                                  }
-                                },
-                              ),
-                            ),
-                            SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: () {
-                                if (_searchController.text.isNotEmpty) {
-                                  _saveSearchHistory(_searchController.text);
-                                  _onSearchChanged(_searchController.text);
-                                  if (_places.isNotEmpty) {
-                                    _moveCameraToPlace(
-                                      _places.first['lat'],
-                                      _places.first['lng'],
-                                    );
-                                  }
-                                  setState(() {
-                                    _isSearching = false;
-                                  });
-                                }
-                              },
-                              child: Container(
-                                padding: EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: Colors.blue,
-                                  borderRadius: BorderRadius.circular(30.0),
-                                ),
-                                child: Icon(Icons.search, color: Colors.white),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                // AnimatedPositioned(
+                //   duration: Duration(milliseconds: 500),
+                //   curve: Curves.easeInOut,
+                //   top: _isSearching ? 0 : 16,
+                //   left: _isSearching ? 0 : 16,
+                //   right: _isSearching ? 0 : 16,
+                //   child: Hero(
+                //     tag: 'searchBar',
+                //     child: Material(
+                //       color: Colors.transparent,
+                //       child: Container(
+                //         decoration: BoxDecoration(
+                //           color: Colors.white,
+                //           borderRadius: BorderRadius.circular(30.0),
+                //           boxShadow: [
+                //             BoxShadow(
+                //               color: Colors.black.withOpacity(0.2),
+                //               blurRadius: 8.0,
+                //               offset: Offset(0, 2),
+                //             ),
+                //           ],
+                //         ),
+                //         child: Row(
+                //           children: [
+                //             Expanded(
+                //               child: TextField(
+                //                 controller: _searchController,
+                //                 autofocus: _isSearching,
+                //                 decoration: InputDecoration(
+                //                   hintText: 'Search Places...',
+                //                   filled: true,
+                //                   fillColor: Colors.white,
+                //                   border: OutlineInputBorder(
+                //                     borderRadius: BorderRadius.circular(30.0),
+                //                     borderSide: BorderSide.none,
+                //                   ),
+                //                   prefixIcon: Icon(Icons.search),
+                //                   suffixIcon: _searchController.text.isNotEmpty
+                //                       ? IconButton(
+                //                           icon: Icon(Icons.clear),
+                //                           onPressed: () {
+                //                             _clearSearch();
+                //                           },
+                //                         )
+                //                       : null,
+                //                 ),
+                //                 onTap: () {
+                //                   setState(() {
+                //                     _isSearching = true;
+                //                     _suggestions.clear();
+                //                   });
+                //                 },
+                //                 onChanged: (query) {
+                //                   if (query.isNotEmpty) {
+                //                     _fetchPlaceSuggestions(query);
+                //                     setState(() {
+                //                       _isSearching = true;
+                //                     });
+                //                   } else {
+                //                     setState(() {
+                //                       _isSearching = false;
+                //                       _suggestions.clear();
+                //                     });
+                //                   }
+                //                 },
+                //               ),
+                //             ),
+                //             SizedBox(width: 8),
+                //             GestureDetector(
+                //               onTap: () {
+                //                 if (_searchController.text.isNotEmpty) {
+                //                   _saveSearchHistory(_searchController.text);
+                //                   _onSearchChanged(_searchController.text);
+                //                   if (_places.isNotEmpty) {
+                //                     _moveCameraToPlace(
+                //                       _places.first['lat'],
+                //                       _places.first['lng'],
+                //                     );
+                //                   }
+                //                   setState(() {
+                //                     _isSearching = false;
+                //                   });
+                //                 }
+                //               },
+                //               child: Container(
+                //                 padding: EdgeInsets.all(12),
+                //                 decoration: BoxDecoration(
+                //                   color: Colors.blue,
+                //                   borderRadius: BorderRadius.circular(30.0),
+                //                 ),
+                //                 child: Icon(Icons.search, color: Colors.white),
+                //               ),
+                //             ),
+                //           ],
+                //         ),
+                //       ),
+                //     ),
+                //   ),
+                // ),
 
-                if (_isSearching && _suggestions.isNotEmpty)
-                  Positioned(
-                    top: 80, // Position list below the search bar
-                    left: 16,
-                    right: 16,
-                    child: Material(
-                      color: Colors.transparent,
-                      child: FutureBuilder<List<Map<String, dynamic>>>(
-                        future: _calculateAndSortPlacesByDistance(),
-                        builder: (context, snapshot) {
-                          if (snapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return Center(child: CircularProgressIndicator());
-                          } else if (snapshot.hasData) {
-                            List<Map<String, dynamic>> sortedSuggestions =
-                                snapshot.data!;
+                // if (_searchHistory.isNotEmpty && _searchController.text.isEmpty)
+                //   Positioned(
+                //     top: 80,
+                //     left: 16,
+                //     right: 16,
+                //     child: Material(
+                //       color: Colors.transparent,
+                //       child: Container(
+                //         height: 300,
+                //         child: ListView.builder(
+                //           itemCount: _searchHistory.length,
+                //           itemBuilder: (context, index) {
+                //             return ListTile(
+                //               title: Text(_searchHistory[index]),
+                //               onTap: () {
+                //                 _searchController.text = _searchHistory[index];
+                //                 _onSearchChanged(_searchHistory[index]);
+                //               },
+                //             );
+                //           },
+                //         ),
+                //       ),
+                //     ),
+                //   ),
 
-                            return Container(
-                              height: 300,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(10),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black26,
-                                    blurRadius: 10,
-                                    offset: Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              child: ListView.builder(
-                                itemCount: sortedSuggestions.length,
-                                itemBuilder: (context, index) {
-                                  final suggestion = sortedSuggestions[index];
-                                  final placeId = suggestion['place_id'];
-                                  final distance = suggestion['distance'] ??
-                                      'Unknown distance';
+                // if (_isSearching && _suggestions.isNotEmpty)
+                //   Positioned(
+                //     top: 80, // Position list below the search bar
+                //     left: 16,
+                //     right: 16,
+                //     child: Material(
+                //       color: Colors.transparent,
+                //       child: FutureBuilder<List<Map<String, dynamic>>>(
+                //         future: _calculateAndSortPlacesByDistance(),
+                //         builder: (context, snapshot) {
+                //           if (snapshot.connectionState ==
+                //               ConnectionState.waiting) {
+                //             return Center(child: CircularProgressIndicator());
+                //           } else if (snapshot.hasData) {
+                //             List<Map<String, dynamic>> sortedSuggestions =
+                //                 snapshot.data!;
 
-                                  return ListTile(
-                                    title: Text(suggestion['description'] ??
-                                        suggestion['name']),
-                                    subtitle: Text(
-                                        'Distance: ${distance ?? 'Calculating...'}'),
-                                    onTap: () async {
-                                      final placeDetails =
-                                          await fetchPlaceDetails(placeId);
-                                      _moveCameraToPlace(placeDetails['lat'],
-                                          placeDetails['lng']);
-                                      _saveSearchHistory(
-                                          suggestion['description'] ??
-                                              suggestion['name']);
-                                      setState(() {
-                                        _searchController.text =
-                                            suggestion['description'] ??
-                                                suggestion['name'];
-                                        _isSearching = false;
-                                        _suggestions.clear();
-                                      });
-                                    },
-                                  );
-                                },
-                              ),
-                            );
-                          } else {
-                            return Text('Error calculating distances');
-                          }
-                        },
-                      ),
-                    ),
-                  ),
+                //             return Container(
+                //               height: 300,
+                //               decoration: BoxDecoration(
+                //                 color: Colors.white,
+                //                 borderRadius: BorderRadius.circular(10),
+                //                 boxShadow: [
+                //                   BoxShadow(
+                //                     color: Colors.black26,
+                //                     blurRadius: 10,
+                //                     offset: Offset(0, 2),
+                //                   ),
+                //                 ],
+                //               ),
+                //               child: ListView.builder(
+                //                 itemCount: sortedSuggestions.length,
+                //                 itemBuilder: (context, index) {
+                //                   final suggestion = sortedSuggestions[index];
+                //                   final placeId = suggestion['place_id'];
+                //                   final distance = suggestion['distance'] ??
+                //                       'Unknown distance';
+
+                //                   return ListTile(
+                //                     title: Text(suggestion['description'] ??
+                //                         suggestion['name']),
+                //                     subtitle: Text(
+                //                         'Distance: ${distance ?? 'Calculating...'}'),
+                //                     onTap: () async {
+                //                       final placeDetails =
+                //                           await fetchPlaceDetails(placeId);
+                //                       _moveCameraToPlace(placeDetails['lat'],
+                //                           placeDetails['lng']);
+                //                       _saveSearchHistory(
+                //                           suggestion['description'] ??
+                //                               suggestion['name']);
+                //                       setState(() {
+                //                         _searchController.text =
+                //                             suggestion['description'] ??
+                //                                 suggestion['name'];
+                //                         _isSearching = false;
+                //                         _suggestions.clear();
+                //                       });
+                //                     },
+                //                   );
+                //                 },
+                //               ),
+                //             );
+                //           } else {
+                //             return Text('Error calculating distances');
+                //           }
+                //         },
+                //       ),
+                //     ),
+                //   ),
                 // Floating Action Buttons
+                Positioned(
+                  bottom: 100,
+                  left: 16,
+                  child: FloatingActionButton(
+                    onPressed: () => _showSearchScreen(context),
+                    child: Icon(Icons.search),
+                  ),
+                ),
                 Positioned(
                   bottom: 100,
                   right: 16,
