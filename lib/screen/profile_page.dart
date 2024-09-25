@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'edit_profile_page.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -38,21 +39,31 @@ class _ProfilePageState extends State<ProfilePage> {
     String? userId = await _getUserId();
     if (userId != null) {
       try {
-        DocumentSnapshot userSnapshot = await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .get();
+        DocumentReference userDocRef =
+            FirebaseFirestore.instance.collection('users').doc(userId);
+        DocumentSnapshot userSnapshot = await userDocRef.get();
+
+        if (!userSnapshot.exists) {
+          // สร้างเอกสารใหม่ถ้าไม่พบ
+          await userDocRef.set({
+            'username': '',
+            'email': FirebaseAuth.instance.currentUser?.email ?? '',
+            'phone': '',
+            'profileImageUrl': '',
+          });
+          userSnapshot = await userDocRef.get();
+        }
 
         setState(() {
           var userData = userSnapshot.data() as Map<String, dynamic>?;
-          userName = userData?['username'];
-          userEmail = userData?['email'];
-          userPhone = userData?['phone'];
-          profileImageUrl = userData?['profileImageUrl'] ?? null;
+          userName = userData?['username'] ?? '';
+          userEmail = userData?['email'] ?? '';
+          userPhone = userData?['phone'] ?? '';
+          profileImageUrl = userData?['profileImageUrl'] ?? '';
 
-          _usernameController.text = userName ?? '';
-          _emailController.text = userEmail ?? '';
-          _phoneController.text = userPhone ?? '';
+          _usernameController.text = userName!;
+          _emailController.text = userEmail!;
+          _phoneController.text = userPhone!;
         });
       } catch (e) {
         print('Error loading user profile: $e');
@@ -84,7 +95,7 @@ class _ProfilePageState extends State<ProfilePage> {
         await FirebaseFirestore.instance
             .collection('users')
             .doc(userId)
-            .update({'profileImageUrl': downloadUrl});
+            .set({'profileImageUrl': downloadUrl}, SetOptions(merge: true));
 
         setState(() {
           profileImageUrl = downloadUrl;
@@ -107,10 +118,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
     if (userId != null) {
       try {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .update({
+        await FirebaseFirestore.instance.collection('users').doc(userId).update({
           'username': _usernameController.text,
           'email': _emailController.text,
           'phone': _phoneController.text,
@@ -162,8 +170,9 @@ class _ProfilePageState extends State<ProfilePage> {
                     children: [
                       CircleAvatar(
                         radius: 70,
-                        backgroundImage: profileImageUrl != null
-                            ? NetworkImage(profileImageUrl!)
+                        backgroundImage: profileImageUrl != null &&
+                                profileImageUrl!.isNotEmpty
+                            ? CachedNetworkImageProvider(profileImageUrl!)
                             : AssetImage('assets/images/default_avatar.png')
                                 as ImageProvider,
                         backgroundColor: Colors.grey.shade300,
@@ -202,11 +211,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       children: [
                         Icon(Icons.email, color: Colors.black54),
                         SizedBox(width: 10),
-                        Text(
-                          userEmail ?? 'No Email',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.black87,
+                        Expanded(
+                          child: Text(
+                            userEmail ?? 'No Email',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.black87,
+                            ),
                           ),
                         ),
                       ],
@@ -219,11 +230,13 @@ class _ProfilePageState extends State<ProfilePage> {
                       children: [
                         Icon(Icons.phone, color: Colors.black54),
                         SizedBox(width: 10),
-                        Text(
-                          userPhone ?? 'No Phone',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.black87,
+                        Expanded(
+                          child: Text(
+                            userPhone ?? 'No Phone',
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: Colors.black87,
+                            ),
                           ),
                         ),
                       ],
@@ -231,8 +244,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   ),
                   Spacer(),
                   ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
+                    onPressed: () async {
+                      final updated = await Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (context) => EditProfilePage(
@@ -242,6 +255,10 @@ class _ProfilePageState extends State<ProfilePage> {
                           ),
                         ),
                       );
+
+                      if (updated == true) {
+                        await _loadUserProfile();
+                      }
                     },
                     icon: Icon(Icons.edit, color: Colors.white),
                     label: Text('Edit Profile'),
