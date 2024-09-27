@@ -1,5 +1,9 @@
+import 'dart:io';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:image_picker/image_picker.dart';
+import 'manage_users_page.dart'; // เพิ่มการนำเข้าหน้า ManageUsersPage
 
 class AdminDashboardPage extends StatefulWidget {
   @override
@@ -8,13 +12,30 @@ class AdminDashboardPage extends StatefulWidget {
 
 class _AdminDashboardPageState extends State<AdminDashboardPage> {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  String _selectedCategory = 'ev_stations';
-  List<DocumentSnapshot> allRequests = [];
 
-  final List<Map<String, String>> _placeCategories = [
-    {'label': 'EV Stations', 'value': 'ev_stations'},
-    {'label': 'General Places', 'value': 'places'},
+  // เปลี่ยนจาก _selectedCategory เป็น selectedType
+  String selectedType = 'ev_station';
+  String selectedChargingType = 'Type 1';
+
+  // ปรับรายการประเภทสถานที่
+  final List<String> placeTypes = [
+    'ev_station',
+    'restaurant',
+    'cafe',
+    'store',
+    'gas_station'
   ];
+
+  final List<String> chargingTypes = [
+    'Type 1',
+    'Type 2',
+    'CSS',
+    'CHAdeMO',
+    'GB/T',
+    'Tesla',
+  ];
+
+  List<DocumentSnapshot> allRequests = [];
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +56,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         ),
         backgroundColor: const Color.fromARGB(255, 3, 33, 153), // เปลี่ยนสีธีม
         actions: [
-          // ลบปุ่มเพิ่มสถานที่ออกจาก AppBar
           PopupMenuButton<int>(
             icon: Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
@@ -47,7 +67,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               PopupMenuItem(
                 value: 1,
                 child: ListTile(
-                  leading: Icon(Icons.pending_actions, color: Colors.lightBlueAccent),
+                  leading: Icon(Icons.pending_actions,
+                      color: Colors.lightBlueAccent),
                   title: Text('Manage Requests'),
                 ),
               ),
@@ -55,145 +76,223 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Dropdown สำหรับเลือกประเภทสถานที่
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Card(
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(30),
-              ),
-              elevation: 4,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                child: DropdownButtonFormField<String>(
-                  value: _selectedCategory,
-                  items: _placeCategories.map((category) {
-                    return DropdownMenuItem<String>(
-                      value: category['value'],
-                      child: Row(
-                        children: [
-                          Icon(
-                            category['value'] == 'ev_stations'
-                                ? Icons.ev_station
-                                : Icons.place,
-                            color: Colors.lightBlueAccent, // เปลี่ยนสีไอคอน
+          Column(
+            children: [
+              // Dropdown สำหรับเลือกประเภทสถานที่
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Card(
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  elevation: 4,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: DropdownButtonFormField<String>(
+                      value: selectedType,
+                      items: placeTypes.map((type) {
+                        return DropdownMenuItem<String>(
+                          value: type,
+                          child: Row(
+                            children: [
+                              Icon(
+                                type == 'ev_station'
+                                    ? Icons.ev_station
+                                    : Icons.place,
+                                color: Colors.lightBlueAccent, // เปลี่ยนสีไอคอน
+                              ),
+                              SizedBox(width: 10),
+                              Text(
+                                _getTypeLabel(type),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.black, // สีข้อความ
+                                ),
+                              ),
+                            ],
                           ),
-                          SizedBox(width: 10),
-                          Text(
-                            category['label']!,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.black, // สีข้อความ
-                            ),
-                          ),
-                        ],
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        setState(() {
+                          selectedType = value!;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
                       ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedCategory = value!;
-                    });
-                  },
-                  decoration: InputDecoration(
-                    border: InputBorder.none,
+                      icon: Icon(
+                        Icons.arrow_drop_down,
+                        color: Colors.lightBlueAccent, // เปลี่ยนสีลูกศร
+                      ),
+                      dropdownColor: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                    ),
                   ),
-                  icon: Icon(
-                    Icons.arrow_drop_down,
-                    color: Colors.lightBlueAccent, // เปลี่ยนสีลูกศร
-                  ),
-                  dropdownColor: Colors.white,
-                  borderRadius: BorderRadius.circular(15),
                 ),
               ),
-            ),
-          ),
-          Expanded(
-            child: FutureBuilder<QuerySnapshot>(
-              future: _firestore.collection(_selectedCategory).get(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return Center(child: CircularProgressIndicator());
-                }
-                final places = snapshot.data!.docs;
-                return ListView.builder(
-                  itemCount: places.length,
-                  itemBuilder: (context, index) {
-                    final place = places[index];
-                    final placeData = place.data() as Map<String, dynamic>?;
-                    return Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
-                      ),
-                      elevation: 4,
-                      margin:
-                          EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      child: ListTile(
-                        contentPadding: EdgeInsets.all(16.0),
-                        leading: Icon(
-                          _selectedCategory == 'ev_stations'
-                              ? Icons.ev_station
-                              : Icons.place,
-                          color: Colors.lightBlueAccent, // เปลี่ยนสีไอคอน
-                          size: 40,
-                        ),
-                        title: Text(
-                          placeData?['name'] ?? 'No name available',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
+              Expanded(
+                child: FutureBuilder<QuerySnapshot>(
+                  // เปลี่ยนการเรียกใช้คอลเล็กชันเป็น 'places' และใช้ฟิลด์ 'type' ในการกรอง
+                  future: _firestore
+                      .collection('places')
+                      .where('type', isEqualTo: selectedType)
+                      .get(),
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return Center(child: CircularProgressIndicator());
+                    }
+                    final places = snapshot.data!.docs;
+                    return ListView.builder(
+                      itemCount: places.length,
+                      itemBuilder: (context, index) {
+                        final place = places[index];
+                        final placeData = place.data() as Map<String, dynamic>?;
+                        return Card(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
                           ),
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              placeData?['address'] ?? 'No address available',
-                              style: TextStyle(fontSize: 16),
+                          elevation: 4,
+                          margin:
+                              EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: ListTile(
+                            contentPadding: EdgeInsets.all(16.0),
+                            leading: selectedType == 'ev_station'
+                                ? Icon(
+                                    Icons.ev_station,
+                                    color: Colors.lightBlueAccent,
+                                    size: 40,
+                                  )
+                                : Icon(
+                                    Icons.place,
+                                    color: Colors.lightBlueAccent,
+                                    size: 40,
+                                  ),
+                            title: Text(
+                              placeData?['name'] ?? 'No name available',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                            SizedBox(height: 4),
-                          ],
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () {
-                                _showEditStationDialog(place);
-                              },
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // แสดงภาพถ้ามี
+                                if (placeData?['image_url'] != null &&
+                                    placeData!['image_url'].isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 8.0),
+                                    child: Image.network(
+                                      placeData['image_url'],
+                                      height: 100,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                Text(
+                                  placeData?['address'] ??
+                                      'No address available',
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                                SizedBox(height: 4),
+                                // แสดงข้อมูลเพิ่มเติมถ้าเป็นสถานี EV
+                                if (selectedType == 'ev_station') ...[
+                                  Text(
+                                    'Charging Type: ${placeData?['charging_type'] ?? 'N/A'}',
+                                    style: TextStyle(fontSize: 16),
+                                  ),
+                                  Text(
+                                    'Power: ${placeData?['kw'] ?? 'N/A'} kW',
+                                    style: TextStyle(fontSize: 16),
+                                  ),
+                                ],
+                              ],
                             ),
-                            IconButton(
-                              icon: Icon(Icons.delete, color: Colors.red),
-                              onPressed: () {
-                                _deleteStation(place.id);
-                              },
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.edit, color: Colors.blue),
+                                  onPressed: () {
+                                    _showEditPlaceDialog(place);
+                                  },
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.delete, color: Colors.red),
+                                  onPressed: () {
+                                    _deletePlace(place.id);
+                                  },
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        onTap: () {
-                          _showPlaceDetails(place);
-                        },
-                      ),
+                            onTap: () {
+                              _showPlaceDetails(place);
+                            },
+                          ),
+                        );
+                      },
                     );
                   },
+                ),
+              ),
+            ],
+          ),
+          // เพิ่มปุ่ม Manage Users
+          Positioned(
+            bottom: 80,
+            right: 16,
+            child: FloatingActionButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => ManageUsersPage()),
                 );
               },
+              heroTag: 'manageUsers', // กำหนด heroTag ที่ไม่ซ้ำกัน
+              backgroundColor: Colors.white,
+              shape: CircleBorder(),
+              child: Icon(
+                Icons.person,
+                color: Colors.blueAccent,
+                size: 26,
+              ),
+              tooltip: 'Manage Users',
             ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddStationDialog,
+        onPressed: _showAddPlaceDialog,
+        heroTag: 'addPlace', // กำหนด heroTag ที่ไม่ซ้ำกัน
         child: Icon(Icons.add),
         backgroundColor: Colors.lightBlueAccent,
-        tooltip: 'Add New Station',
+        tooltip: 'Add New Place',
       ),
     );
+  }
+
+  // ฟังก์ชันสำหรับแปลง type เป็น label ที่อ่านง่าย
+  String _getTypeLabel(String type) {
+    switch (type) {
+      case 'ev_station':
+        return 'EV Station';
+      case 'restaurant':
+        return 'Restaurant';
+      case 'cafe':
+        return 'Cafe';
+      case 'store':
+        return 'Store';
+      case 'gas_station':
+        return 'Gas Station';
+      default:
+        return 'Unknown';
+    }
   }
 
   void _showPlaceDetails(DocumentSnapshot place) {
@@ -204,43 +303,69 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         return AlertDialog(
           title: Text(placeData?['name'] ?? 'No name available'),
           content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: Icon(Icons.location_on, color: Colors.lightBlueAccent),
-                  title: Text(placeData?['address'] ?? 'No address available'),
-                ),
-                if (placeData?.containsKey('phone') ?? false)
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth:
+                    MediaQuery.of(context).size.width * 0.8, // จำกัดความกว้าง
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (placeData?['image_url'] != null &&
+                      placeData!['image_url'].isNotEmpty)
+                    SizedBox(
+                      height: 200,
+                      width: MediaQuery.of(context).size.width *
+                          0.7, // จำกัดความกว้าง
+                      child: Image.network(
+                        placeData['image_url'],
+                        fit: BoxFit.cover,
+                      ),
+                    )
+                  else
+                    CircleAvatar(
+                      child: Icon(Icons.person, size: 40),
+                      radius: 40,
+                    ),
+                  SizedBox(height: 10),
                   ListTile(
-                    leading: Icon(Icons.phone, color: Colors.green),
-                    title: Text(placeData?['phone']),
+                    leading:
+                        Icon(Icons.location_on, color: Colors.lightBlueAccent),
+                    title:
+                        Text(placeData?['address'] ?? 'No address available'),
                   ),
-                if (placeData?.containsKey('charging_type') ?? false)
+                  if (placeData?.containsKey('phone') ?? false)
+                    ListTile(
+                      leading: Icon(Icons.phone, color: Colors.green),
+                      title: Text(placeData?['phone']),
+                    ),
+                  if (placeData?['type'] == 'ev_station') ...[
+                    ListTile(
+                      leading: Icon(Icons.ev_station, color: Colors.orange),
+                      title:
+                          Text('Charging Type: ${placeData?['charging_type']}'),
+                    ),
+                    ListTile(
+                      leading: Icon(Icons.bolt, color: Colors.yellow),
+                      title: Text('Power: ${placeData?['kw']} kW'),
+                    ),
+                  ],
+                  // แสดง lat/lng
                   ListTile(
-                    leading: Icon(Icons.ev_station, color: Colors.orange),
-                    title: Text('Charging Type: ${placeData?['charging_type']}'),
+                    leading: Icon(Icons.map, color: Colors.lightBlueAccent),
+                    title: Text(
+                      'Latitude: ${placeData?['lat'] ?? 'N/A'}, Longitude: ${placeData?['lng'] ?? 'N/A'}',
+                    ),
                   ),
-                if (placeData?.containsKey('kw') ?? false)
-                  ListTile(
-                    leading: Icon(Icons.bolt, color: Colors.yellow),
-                    title: Text('Power: ${placeData?['kw']} kW'),
-                  ),
-                // เพิ่มการแสดง lat/lng
-                ListTile(
-                  leading: Icon(Icons.map, color: Colors.lightBlueAccent),
-                  title: Text(
-                    'Latitude: ${placeData?['lat'] ?? 'N/A'}, Longitude: ${placeData?['lng'] ?? 'N/A'}',
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child:
-                  Text('Close', style: TextStyle(color: Colors.lightBlueAccent)),
+              child: Text('Close',
+                  style: TextStyle(color: Colors.lightBlueAccent)),
             ),
           ],
         );
@@ -300,8 +425,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       .get(),
                 ]),
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState ==
-                      ConnectionState.waiting) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
                     return Center(child: CircularProgressIndicator());
                   }
 
@@ -334,15 +458,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     itemCount: allRequests.length,
                     itemBuilder: (context, index) {
                       var request = allRequests[index];
-                      var requestData =
-                          request.data() as Map<String, dynamic>?;
+                      var requestData = request.data() as Map<String, dynamic>?;
 
-                      final String name =
-                          requestData?['name'] ?? 'No name';
+                      final String name = requestData?['name'] ?? 'No name';
                       final String address =
                           requestData?['address'] ?? 'No address';
-                      final String phone =
-                          requestData?['phone'] ?? 'No phone';
+                      final String phone = requestData?['phone'] ?? 'No phone';
                       final String chargingType =
                           requestData?['charging_type'] ?? 'N/A';
                       final String openHours =
@@ -359,8 +480,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         child: Padding(
                           padding: const EdgeInsets.all(16.0),
                           child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
                                 name,
@@ -373,8 +493,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               SizedBox(height: 8),
                               Row(
                                 children: [
-                                  Icon(Icons.location_on,
-                                      color: Colors.grey),
+                                  Icon(Icons.location_on, color: Colors.grey),
                                   SizedBox(width: 5),
                                   Expanded(
                                     child: Text(
@@ -399,8 +518,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               if (chargingType != 'N/A')
                                 Row(
                                   children: [
-                                    Icon(Icons.ev_station,
-                                        color: Colors.grey),
+                                    Icon(Icons.ev_station, color: Colors.grey),
                                     SizedBox(width: 5),
                                     Text(
                                       'Charging Type: $chargingType',
@@ -411,8 +529,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               SizedBox(height: 8),
                               Row(
                                 children: [
-                                  Icon(Icons.access_time,
-                                      color: Colors.grey),
+                                  Icon(Icons.access_time, color: Colors.grey),
                                   SizedBox(width: 5),
                                   Text(
                                     'Open Hours: $openHours',
@@ -433,8 +550,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               ),
                               SizedBox(height: 12),
                               Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.end,
+                                mainAxisAlignment: MainAxisAlignment.end,
                                 children: [
                                   IconButton(
                                     icon: Icon(Icons.check_circle,
@@ -446,8 +562,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   ),
                                   SizedBox(width: 10),
                                   IconButton(
-                                    icon: Icon(Icons.cancel,
-                                        color: Colors.red),
+                                    icon: Icon(Icons.cancel, color: Colors.red),
                                     onPressed: () async {
                                       await _rejectRequest(request);
                                       Navigator.pop(context);
@@ -470,7 +585,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // เมธอดสำหรับอนุมัติคำขอ
   Future<void> _approveRequest(DocumentSnapshot request) async {
     try {
       Map<String, dynamic>? requestData =
@@ -481,17 +595,31 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       String targetCollection =
           (collection == 'station_requests') ? 'ev_stations' : 'places';
 
-      await FirebaseFirestore.instance.collection(targetCollection).add({
-        'name': requestData?['name'] ?? '',
-        'address': requestData?['address'] ?? '',
-        'lat': requestData?['lat'] ?? 0.0,
-        'lng': requestData?['lng'] ?? 0.0,
-        'phone': requestData?['phone'] ?? '',
-        'open_hours': requestData?['open_hours'] ?? '',
-        if (collection == 'station_requests')
-          'charging_type': requestData?['charging_type'] ?? '',
-        'kw': requestData?['kw'] ?? 0,
-      });
+      // กำหนดฟิลด์ที่จำเป็นพร้อมค่าเริ่มต้น
+      Map<String, dynamic> dataToAdd = {
+        'name': requestData?['name']?.toString() ?? 'No name provided',
+        'address': requestData?['address']?.toString() ?? 'No address provided',
+        'lat': requestData?['lat']?.toDouble() ?? 0.0,
+        'lng': requestData?['lng']?.toDouble() ?? 0.0,
+        'phone': requestData?['phone']?.toString() ?? 'No phone provided',
+        'open_hours':
+            requestData?['open_hours']?.toString() ?? 'No open hours provided',
+        'type': requestData?['type']?.toString() ?? 'unknown',
+        'status': 'active', // หรือสถานะอื่นที่เหมาะสม
+        'created_at': FieldValue.serverTimestamp(),
+      };
+
+      // ถ้าเป็น EV Station เพิ่มฟิลด์เพิ่มเติม
+      if (collection == 'station_requests') {
+        dataToAdd['charging_type'] =
+            requestData?['charging_type']?.toString() ?? 'Unknown';
+        dataToAdd['kw'] = requestData?['kw']?.toDouble() ?? 0.0;
+        dataToAdd['image_url'] = requestData?['image_url']?.toString() ?? '';
+      }
+
+      await FirebaseFirestore.instance
+          .collection(targetCollection)
+          .add(dataToAdd);
 
       await FirebaseFirestore.instance
           .collection(collection)
@@ -502,7 +630,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Request Approved and station added!'),
+          content: Text(
+              'Request Approved and ${collection == 'station_requests' ? 'EV Station' : 'Place'} added!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -553,8 +682,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     });
   }
 
-  // เมธอดสำหรับแสดง Dialog เพิ่มสถานีใหม่
-  void _showAddStationDialog() {
+  // เมธอดสำหรับแสดง Dialog เพิ่มสถานที่ใหม่
+  void _showAddPlaceDialog() {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController addressController = TextEditingController();
     final TextEditingController phoneController = TextEditingController();
@@ -562,15 +691,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     final TextEditingController lngController = TextEditingController();
     final TextEditingController kwController = TextEditingController();
 
-    String selectedChargingType = 'Type 1';
-    final List<String> chargingTypes = [
-      'Type 1',
-      'Type 2',
-      'CSS',
-      'CHAdeMO',
-      'GB/T',
-      'Tesla',
-    ];
+    String tempSelectedType = selectedType;
+    String tempSelectedChargingType = 'Type 1';
+    File? _selectedImage; // ตัวแปรเก็บไฟล์ภาพที่เลือก
 
     showDialog(
       context: context,
@@ -583,11 +706,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             padding: EdgeInsets.all(16.0),
             child: StatefulBuilder(
               builder: (BuildContext context, StateSetter setState) {
+                Future<void> _pickImage() async {
+                  final picker = ImagePicker();
+                  final pickedFile =
+                      await picker.pickImage(source: ImageSource.gallery);
+                  if (pickedFile != null) {
+                    setState(() {
+                      _selectedImage = File(pickedFile.path);
+                    });
+                  }
+                }
+
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Add New EV Station',
+                      'Add New Place',
                       style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
@@ -595,11 +729,42 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                     ),
                     SizedBox(height: 20),
-                    _buildTextField(
-                        nameController, 'Name', Icons.drive_file_rename_outline),
+                    // แสดงภาพที่เลือกถ้ามี
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: _selectedImage != null
+                          ? Image.file(
+                              _selectedImage!,
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              height: 150,
+                              width: double.infinity,
+                              color: Colors.grey[300],
+                              child: Icon(
+                                Icons.camera_alt,
+                                color: Colors.grey[700],
+                                size: 50,
+                              ),
+                            ),
+                    ),
                     SizedBox(height: 10),
-                    _buildTextField(addressController, 'Address',
-                        Icons.location_on),
+                    TextButton.icon(
+                      onPressed: _pickImage,
+                      icon: Icon(Icons.image, color: Colors.lightBlueAccent),
+                      label: Text(
+                        'Select Image',
+                        style: TextStyle(color: Colors.lightBlueAccent),
+                      ),
+                    ),
+                    SizedBox(height: 10),
+                    _buildTextField(nameController, 'Name',
+                        Icons.drive_file_rename_outline),
+                    SizedBox(height: 10),
+                    _buildTextField(
+                        addressController, 'Address', Icons.location_on),
                     SizedBox(height: 10),
                     _buildTextField(phoneController, 'Phone', Icons.phone),
                     SizedBox(height: 10),
@@ -610,12 +775,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         lngController, 'Longitude', Icons.my_location),
                     SizedBox(height: 10),
                     DropdownButtonFormField<String>(
-                      value: selectedChargingType,
-                      items: chargingTypes.map((String type) {
+                      value: tempSelectedType,
+                      items: placeTypes.map((String type) {
                         return DropdownMenuItem<String>(
                           value: type,
                           child: Text(
-                            type,
+                            _getTypeLabel(type),
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w500,
@@ -625,19 +790,53 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       }).toList(),
                       onChanged: (value) {
                         setState(() {
-                          selectedChargingType = value!;
+                          tempSelectedType = value!;
                         });
                       },
                       decoration: InputDecoration(
-                        labelText: 'Charging Type',
-                        prefixIcon: Icon(Icons.ev_station, color: Colors.lightBlueAccent),
+                        labelText: 'Type',
+                        prefixIcon:
+                            Icon(Icons.category, color: Colors.lightBlueAccent),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10.0),
                         ),
                       ),
                     ),
                     SizedBox(height: 10),
-                    _buildTextField(kwController, 'Power (kW)', Icons.bolt),
+                    // แสดง Charging Type และ Power เฉพาะเมื่อเลือกเป็น EV Station
+                    if (tempSelectedType == 'ev_station') ...[
+                      DropdownButtonFormField<String>(
+                        value: tempSelectedChargingType,
+                        items: chargingTypes.map((String type) {
+                          return DropdownMenuItem<String>(
+                            value: type,
+                            child: Text(
+                              type,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            tempSelectedChargingType = value!;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Charging Type',
+                          prefixIcon: Icon(Icons.ev_station,
+                              color: Colors.lightBlueAccent),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10.0),
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      _buildTextField(kwController, 'Power (kW)', Icons.bolt),
+                      SizedBox(height: 10),
+                    ],
                     SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -652,10 +851,13 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         SizedBox(width: 10),
                         ElevatedButton(
                           onPressed: () async {
+                            // ตรวจสอบฟิลด์ที่จำเป็น
                             if (nameController.text.isEmpty ||
                                 addressController.text.isEmpty ||
                                 latController.text.isEmpty ||
-                                lngController.text.isEmpty) {
+                                lngController.text.isEmpty ||
+                                (tempSelectedType == 'ev_station' &&
+                                    kwController.text.isEmpty)) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                     content: Text(
@@ -666,6 +868,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
                             double? lat = double.tryParse(latController.text);
                             double? lng = double.tryParse(lngController.text);
+                            double? kwValue = tempSelectedType == 'ev_station'
+                                ? double.tryParse(kwController.text)
+                                : null;
 
                             if (lat == null || lng == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -676,8 +881,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               return;
                             }
 
-                            int? kwValue = int.tryParse(kwController.text);
-                            if (kwValue == null) {
+                            if (tempSelectedType == 'ev_station' &&
+                                kwValue == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                     content:
@@ -686,28 +891,64 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               return;
                             }
 
-                            await FirebaseFirestore.instance
-                                .collection('ev_stations')
-                                .add({
-                              'name': nameController.text,
-                              'address': addressController.text,
-                              'phone': phoneController.text,
+                            String imageUrl = '';
+                            if (_selectedImage != null) {
+                              // อัปโหลดภาพไปยัง Firebase Storage
+                              String fileName =
+                                  '${DateTime.now().millisecondsSinceEpoch}.jpg';
+                              Reference storageRef = FirebaseStorage.instance
+                                  .ref()
+                                  .child('place_images')
+                                  .child(fileName);
+                              UploadTask uploadTask =
+                                  storageRef.putFile(_selectedImage!);
+                              TaskSnapshot snapshot = await uploadTask;
+                              imageUrl = await snapshot.ref.getDownloadURL();
+                            }
+
+                            // กำหนดฟิลด์ที่อาจขาดหายไปด้วยค่าเริ่มต้น
+                            Map<String, dynamic> dataToAdd = {
+                              'name': nameController.text.isNotEmpty
+                                  ? nameController.text
+                                  : 'No name provided',
+                              'address': addressController.text.isNotEmpty
+                                  ? addressController.text
+                                  : 'No address provided',
+                              'phone': phoneController.text.isNotEmpty
+                                  ? phoneController.text
+                                  : 'No phone provided',
                               'lat': lat,
                               'lng': lng,
-                              'charging_type': selectedChargingType,
-                              'kw': kwValue,
-                            });
+                              'type': tempSelectedType,
+                              'open_hours':
+                                  'No open hours provided', // สามารถเพิ่มฟิลด์นี้ได้หากมีการป้อนข้อมูล
+                              'image_url': imageUrl, // เก็บ URL ของภาพ
+                              'status': 'active', // ตั้งค่าเริ่มต้นสถานะ
+                              'created_at': FieldValue.serverTimestamp(),
+                            };
+
+                            // ถ้าเป็น EV Station เพิ่มฟิลด์เพิ่มเติม
+                            if (tempSelectedType == 'ev_station') {
+                              dataToAdd['charging_type'] =
+                                  tempSelectedChargingType;
+                              dataToAdd['kw'] = kwValue ?? 0.0;
+                            }
+
+                            await FirebaseFirestore.instance
+                                .collection('places')
+                                .add(dataToAdd);
 
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                  content:
-                                      Text('Successfully saved EV Station!')),
+                                  content: Text(
+                                      'Successfully saved ${_getTypeLabel(tempSelectedType)}!')),
                             );
 
                             Navigator.pop(context);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.lightBlueAccent, // เปลี่ยนสีปุ่ม
+                            backgroundColor:
+                                Colors.lightBlueAccent, // เปลี่ยนสีปุ่ม
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10.0),
                             ),
@@ -728,33 +969,27 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // เมธอดสำหรับแสดง Dialog แก้ไขสถานี
-  void _showEditStationDialog(DocumentSnapshot station) {
-    final placeData = station.data() as Map<String, dynamic>?;
+// เมธอดสำหรับแสดง Dialog แก้ไขสถานที่
+  void _showEditPlaceDialog(DocumentSnapshot place) {
+    final placeData = place.data() as Map<String, dynamic>?;
 
     final TextEditingController nameController =
-        TextEditingController(text: placeData?['name']);
+        TextEditingController(text: placeData?['name']?.toString() ?? '');
     final TextEditingController addressController =
-        TextEditingController(text: placeData?['address']);
+        TextEditingController(text: placeData?['address']?.toString() ?? '');
     final TextEditingController phoneController =
-        TextEditingController(text: placeData?['phone']);
+        TextEditingController(text: placeData?['phone']?.toString() ?? '');
     final TextEditingController latController =
-        TextEditingController(text: placeData?['lat'].toString());
+        TextEditingController(text: placeData?['lat']?.toString() ?? '');
     final TextEditingController lngController =
-        TextEditingController(text: placeData?['lng'].toString());
-    final TextEditingController kwController = TextEditingController(
-        text: placeData?['kw'].toString());
+        TextEditingController(text: placeData?['lng']?.toString() ?? '');
+    final TextEditingController kwController =
+        TextEditingController(text: placeData?['kw']?.toString() ?? '');
 
-    String selectedChargingType = placeData?['charging_type'] ?? 'Type 1';
-
-    final List<String> chargingTypes = [
-      'Type 1',
-      'Type 2',
-      'CSS',
-      'CHAdeMO',
-      'GB/T',
-      'Tesla',
-    ];
+    String tempSelectedType = placeData?['type']?.toString() ?? 'ev_station';
+    String tempSelectedChargingType =
+        placeData?['charging_type']?.toString() ?? 'Type 1';
+    File? _selectedImage; // ตัวแปรเก็บไฟล์ภาพที่เลือก
 
     showDialog(
       context: context,
@@ -767,11 +1002,22 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             padding: EdgeInsets.all(16.0),
             child: StatefulBuilder(
               builder: (BuildContext context, StateSetter setState) {
+                Future<void> _pickImage() async {
+                  final picker = ImagePicker();
+                  final pickedFile =
+                      await picker.pickImage(source: ImageSource.gallery);
+                  if (pickedFile != null) {
+                    setState(() {
+                      _selectedImage = File(pickedFile.path);
+                    });
+                  }
+                }
+
                 return Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      'Edit EV Station',
+                      'Edit Place',
                       style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
@@ -779,8 +1025,47 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                     ),
                     SizedBox(height: 20),
-                    _buildTextField(
-                        nameController, 'Name', Icons.drive_file_rename_outline),
+                    // แสดงภาพที่มีอยู่ หรือภาพที่เลือกใหม่
+                    GestureDetector(
+                      onTap: _pickImage,
+                      child: _selectedImage != null
+                          ? Image.file(
+                              _selectedImage!,
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            )
+                          : (placeData?['image_url'] != null &&
+                                  placeData!['image_url'].isNotEmpty
+                              ? Image.network(
+                                  placeData['image_url'],
+                                  height: 150,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                )
+                              : Container(
+                                  height: 150,
+                                  width: double.infinity,
+                                  color: Colors.grey[300],
+                                  child: Icon(
+                                    Icons.camera_alt,
+                                    color: Colors.grey[700],
+                                    size: 50,
+                                  ),
+                                )),
+                    ),
+                    SizedBox(height: 10),
+                    TextButton.icon(
+                      onPressed: _pickImage,
+                      icon: Icon(Icons.image, color: Colors.lightBlueAccent),
+                      label: Text(
+                        'Select Image',
+                        style: TextStyle(color: Colors.lightBlueAccent),
+                      ),
+                    ),
+                    SizedBox(height: 10),
+                    _buildTextField(nameController, 'Name',
+                        Icons.drive_file_rename_outline),
                     SizedBox(height: 10),
                     _buildTextField(
                         addressController, 'Address', Icons.location_on),
@@ -794,12 +1079,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         lngController, 'Longitude', Icons.my_location),
                     SizedBox(height: 10),
                     DropdownButtonFormField<String>(
-                      value: selectedChargingType,
-                      items: chargingTypes.map((String type) {
+                      value: tempSelectedType,
+                      items: placeTypes.map((String type) {
                         return DropdownMenuItem<String>(
                           value: type,
                           child: Text(
-                            type,
+                            _getTypeLabel(type),
                             style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w500,
@@ -809,19 +1094,53 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       }).toList(),
                       onChanged: (value) {
                         setState(() {
-                          selectedChargingType = value!;
+                          tempSelectedType = value!;
                         });
                       },
                       decoration: InputDecoration(
-                        labelText: 'Charging Type',
-                        prefixIcon: Icon(Icons.ev_station, color: Colors.lightBlueAccent),
+                        labelText: 'Type',
+                        prefixIcon:
+                            Icon(Icons.category, color: Colors.lightBlueAccent),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10.0),
                         ),
                       ),
                     ),
                     SizedBox(height: 10),
-                    _buildTextField(kwController, 'Power (kW)', Icons.bolt),
+                    // แสดง Charging Type และ Power เฉพาะเมื่อเลือกเป็น EV Station
+                    if (tempSelectedType == 'ev_station') ...[
+                      DropdownButtonFormField<String>(
+                        value: tempSelectedChargingType,
+                        items: chargingTypes.map((String type) {
+                          return DropdownMenuItem<String>(
+                            value: type,
+                            child: Text(
+                              type,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            tempSelectedChargingType = value!;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Charging Type',
+                          prefixIcon: Icon(Icons.ev_station,
+                              color: Colors.lightBlueAccent),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10.0),
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      _buildTextField(kwController, 'Power (kW)', Icons.bolt),
+                      SizedBox(height: 10),
+                    ],
                     SizedBox(height: 20),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
@@ -836,20 +1155,26 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         SizedBox(width: 10),
                         ElevatedButton(
                           onPressed: () async {
+                            // ตรวจสอบฟิลด์ที่จำเป็น
                             if (nameController.text.isEmpty ||
                                 addressController.text.isEmpty ||
                                 latController.text.isEmpty ||
-                                lngController.text.isEmpty) {
+                                lngController.text.isEmpty ||
+                                (tempSelectedType == 'ev_station' &&
+                                    kwController.text.isEmpty)) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                    content:
-                                        Text('Please fill out all required fields')),
+                                    content: Text(
+                                        'Please fill out all required fields')),
                               );
                               return;
                             }
 
                             double? lat = double.tryParse(latController.text);
                             double? lng = double.tryParse(lngController.text);
+                            double? kwValue = tempSelectedType == 'ev_station'
+                                ? double.tryParse(kwController.text)
+                                : null;
 
                             if (lat == null || lng == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -860,8 +1185,8 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               return;
                             }
 
-                            int? kwValue = int.tryParse(kwController.text);
-                            if (kwValue == null) {
+                            if (tempSelectedType == 'ev_station' &&
+                                kwValue == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
                                     content:
@@ -870,34 +1195,74 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               return;
                             }
 
-                            await FirebaseFirestore.instance
-                                .collection('ev_stations')
-                                .doc(station.id)
-                                .update({
-                              'name': nameController.text,
-                              'address': addressController.text,
-                              'phone': phoneController.text,
+                            String imageUrl = placeData?['image_url'] ?? '';
+                            if (_selectedImage != null) {
+                              // อัปโหลดภาพใหม่ไปยัง Firebase Storage
+                              String fileName =
+                                  '${DateTime.now().millisecondsSinceEpoch}.jpg';
+                              Reference storageRef = FirebaseStorage.instance
+                                  .ref()
+                                  .child('place_images')
+                                  .child(fileName);
+                              UploadTask uploadTask =
+                                  storageRef.putFile(_selectedImage!);
+                              TaskSnapshot snapshot = await uploadTask;
+                              imageUrl = await snapshot.ref.getDownloadURL();
+                            }
+
+                            // กำหนดฟิลด์ที่อาจขาดหายไปด้วยค่าเริ่มต้น
+                            Map<String, dynamic> dataToUpdate = {
+                              'name': nameController.text.isNotEmpty
+                                  ? nameController.text
+                                  : 'No name provided',
+                              'address': addressController.text.isNotEmpty
+                                  ? addressController.text
+                                  : 'No address provided',
+                              'phone': phoneController.text.isNotEmpty
+                                  ? phoneController.text
+                                  : 'No phone provided',
                               'lat': lat,
                               'lng': lng,
-                              'charging_type': selectedChargingType,
-                              'kw': kwValue,
-                            });
+                              'type': tempSelectedType,
+                              'open_hours':
+                                  placeData?['open_hours']?.toString() ??
+                                      'No open hours provided',
+                              'image_url': imageUrl, // อัปเดต URL ของภาพ
+                              'status': 'active', // หรือสถานะอื่นที่เหมาะสม
+                            };
+
+                            // ถ้าเป็น EV Station เพิ่มฟิลด์เพิ่มเติม
+                            if (tempSelectedType == 'ev_station') {
+                              dataToUpdate['charging_type'] =
+                                  tempSelectedChargingType;
+                              dataToUpdate['kw'] = kwValue ?? 0.0;
+                            } else {
+                              // ลบฟิลด์ที่ไม่จำเป็นสำหรับประเภทอื่น ๆ
+                              dataToUpdate.remove('charging_type');
+                              dataToUpdate.remove('kw');
+                            }
+
+                            await FirebaseFirestore.instance
+                                .collection('places')
+                                .doc(place.id)
+                                .update(dataToUpdate);
 
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                  content:
-                                      Text('Successfully updated EV Station!')),
+                                  content: Text(
+                                      'Successfully updated ${_getTypeLabel(tempSelectedType)}!')),
                             );
 
                             Navigator.pop(context);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.lightBlueAccent, // เปลี่ยนสีปุ่ม
+                            backgroundColor:
+                                Colors.lightBlueAccent, // เปลี่ยนสีปุ่ม
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10.0),
                             ),
-                            padding:
-                                EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                            padding: EdgeInsets.symmetric(
+                                vertical: 12, horizontal: 24),
                           ),
                           child: Text('Save'),
                         ),
@@ -913,9 +1278,9 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     );
   }
 
-  // เมธอดสำหรับลบสถานี
-  void _deleteStation(String id) async {
-    await _firestore.collection(_selectedCategory).doc(id).delete();
+  // เมธอดสำหรับลบสถานที่
+  void _deletePlace(String id) async {
+    await _firestore.collection('places').doc(id).delete();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Successfully deleted!')),

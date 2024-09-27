@@ -310,14 +310,14 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-// // ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
-//   List<Map<String, dynamic>> _searchInFirestore(String query) {
-//     return _originalPlaces.where((place) {
-//       final matchQuery =
-//           place['name'].toString().toLowerCase().contains(query.toLowerCase());
-//       return matchQuery;
-//     }).toList();
-//   }
+// ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
+  List<Map<String, dynamic>> _searchInFirestore(String query) {
+    return _originalPlaces.where((place) {
+      final matchQuery =
+          place['name'].toString().toLowerCase().contains(query.toLowerCase());
+      return matchQuery;
+    }).toList();
+  }
 
   Map<String, List<Map<String, dynamic>>> _searchCache = {};
 
@@ -1144,12 +1144,20 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                                             Row(
                                               children: [
                                                 CircleAvatar(
-                                                  backgroundImage: review[
-                                                              'profile_photo_url'] !=
-                                                          null
+                                                  backgroundImage: (review[
+                                                                  'profile_photo_url'] !=
+                                                              null &&
+                                                          review['profile_photo_url']
+                                                              .isNotEmpty)
                                                       ? NetworkImage(review[
                                                           'profile_photo_url'])
-                                                      : null,
+                                                      : (review['profileImageUrl'] !=
+                                                                  null &&
+                                                              review['profileImageUrl']
+                                                                  .isNotEmpty
+                                                          ? NetworkImage(review[
+                                                              'profileImageUrl'])
+                                                          : null),
                                                   radius: 14,
                                                 ),
                                                 SizedBox(width: 8),
@@ -1352,30 +1360,45 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   }
 
   Future<void> _submitReview({
+    required String username,
     required String placeId,
     required String type, // ev_station หรือ place
     required String reviewText,
     required int rating,
     required String? userId,
-    required String username,
   }) async {
-    String username;
+    String username = 'Anonymous';
+    String? profilePhotoUrl;
+
     if (userId != null) {
-      username = await fetchUsernameFromFirestore(userId);
-    } else {
-      username = 'Anonymous';
+      try {
+        username = await fetchUsernameFromFirestore(userId);
+        // ดึง URL รูปโปรไฟล์จาก Firestore ถ้ามี
+        DocumentSnapshot userSnapshot = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+        if (userSnapshot.exists && userSnapshot.data() != null) {
+          profilePhotoUrl = userSnapshot.get('profile_photo_url') ?? '';
+        }
+      } catch (e) {
+        print('Error fetching user details: $e');
+        // ค่า username จะเป็น 'Anonymous' และ profilePhotoUrl จะเป็น null หรือ ''
+      }
     }
 
     if (userId != null) {
       try {
         await FirebaseFirestore.instance.collection('places_reviews').add({
           'place_id': placeId,
-          'type': type,
-          'review': reviewText,
-          'rating': rating,
+          'type': type.isNotEmpty ? type : 'unknown',
+          'review':
+              reviewText.isNotEmpty ? reviewText : 'No review text provided',
+          'rating': rating >= 0 && rating <= 5 ? rating : 0,
           'user_id': userId,
-          'username': username, // ใช้ชื่อผู้ใช้จาก Firebase
-          'created_at': FieldValue.serverTimestamp(), // เวลาในการสร้างรีวิว
+          'username': username.isNotEmpty ? username : 'Anonymous',
+          'created_at': FieldValue.serverTimestamp(),
+          'profile_photo_url': profilePhotoUrl ?? '',
         });
 
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1430,17 +1453,17 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                 'username': review['author_name'],
                 'review': review['text'],
                 'rating': review['rating'],
-                'created_at': DateTime.fromMillisecondsSinceEpoch(
-                    review['time'] *
-                        1000), // เวลาใน Google API เป็น UNIX timestamp
+                'created_at':
+                    DateTime.fromMillisecondsSinceEpoch(review['time'] * 1000),
+                'profile_photo_url': review['profile_photo_url'] ?? '',
               };
             }).toList();
           } else {
-            return []; // ไม่มีรีวิว
+            return [];
           }
         } else {
           print("No reviews field found in the Google API response");
-          return []; // ไม่มีฟิลด์ reviews ใน response
+          return [];
         }
       } else {
         print("Failed to fetch Google reviews: ${response.statusCode}");
@@ -1452,44 +1475,47 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-Future<List<Map<String, dynamic>>> _fetchReviewsFromFirestore(String placeId) async {
-  try {
-    QuerySnapshot reviewSnapshot = await FirebaseFirestore.instance
-        .collection('places_reviews')
-        .where('place_id', isEqualTo: placeId)
-        .orderBy('created_at', descending: true)
-        .get();
+  Future<List<Map<String, dynamic>>> _fetchReviewsFromFirestore(
+      String placeId) async {
+    try {
+      QuerySnapshot reviewSnapshot = await FirebaseFirestore.instance
+          .collection('places_reviews')
+          .where('place_id', isEqualTo: placeId)
+          .orderBy('created_at', descending: true)
+          .get();
 
-    List<Map<String, dynamic>> reviews = [];
+      List<Map<String, dynamic>> reviews = [];
 
-    for (var doc in reviewSnapshot.docs) {
-      String username = doc['username'] ?? 'Anonymous';
-      String? userId = doc['user_id'];
-      String? profilePhotoUrl;
+      for (var doc in reviewSnapshot.docs) {
+        String username = doc['username'] ?? 'Anonymous';
+        String? userId = doc['user_id'];
+        String? profileImageUrl;
 
-      if (userId != null) {
-        DocumentSnapshot userSnapshot = await FirebaseFirestore.instance.collection('users').doc(userId).get();
-        if (userSnapshot.exists) {
-          profilePhotoUrl = userSnapshot.get('profile_photo_url'); // สมมติว่าคุณเก็บ URL รูปโปรไฟล์ไว้ที่นี่
+        if (userId != null) {
+          DocumentSnapshot userSnapshot = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .get();
+          if (userSnapshot.exists) {
+            profileImageUrl = userSnapshot.get('profileImageUrl');
+          }
         }
+
+        reviews.add({
+          'username': username,
+          'review': doc['review'],
+          'rating': doc['rating'],
+          'created_at': (doc['created_at'] as Timestamp).toDate(),
+          'profileImageUrl': profileImageUrl,
+        });
       }
 
-      reviews.add({
-        'username': username,
-        'review': doc['review'],
-        'rating': doc['rating'],
-        'created_at': (doc['created_at'] as Timestamp).toDate(),
-        'profile_photo_url': profilePhotoUrl,
-      });
+      return reviews;
+    } catch (e) {
+      print("Error fetching reviews from Firestore: $e");
+      return [];
     }
-
-    return reviews;
-  } catch (e) {
-    print("Error fetching reviews from Firestore: $e");
-    return [];
   }
-}
-
 
   Future<void> _fetchRouteAndNavigate(gms.LatLng destination) async {
     if (_currentPosition == null) return;
@@ -1615,33 +1641,35 @@ Future<List<Map<String, dynamic>>> _fetchReviewsFromFirestore(String placeId) as
       // สร้าง request ID ใหม่
       String newRequestId = 'request_id${lastRequestId + 1}';
 
-      // ข้อมูลที่จะบันทึก
+      // ข้อมูลที่จะบันทึก พร้อมตั้งค่าฟิลด์ที่อาจขาดหายด้วยค่าเริ่มต้น
       Map<String, dynamic> data = {
-        'name': name,
-        'address': address,
+        'name': name.isNotEmpty ? name : 'No name provided',
+        'address': address.isNotEmpty ? address : 'No address provided',
         'lat': location.latitude,
         'lng': location.longitude,
-        'phone': phone,
-        'open_hours': openHours,
-        'type': type,
+        'phone': phone.isNotEmpty ? phone : 'No phone provided',
+        'open_hours':
+            openHours.isNotEmpty ? openHours : 'No open hours provided',
+        'type': type.isNotEmpty ? type : 'unknown',
         'status': 'pending',
         'requested_at': Timestamp.now(),
+        'image_url': imageUrl.isNotEmpty ? imageUrl : '',
       };
 
       if (type == 'ev_station') {
-        data['charging_type'] = chargingType;
-        data['kw'] = kw;
-      }
-
-      if (imageUrl.isNotEmpty) {
-        data['image_url'] = imageUrl; // เพิ่ม field รูปภาพถ้ามี
+        data['charging_type'] =
+            chargingType.isNotEmpty ? chargingType : 'Unknown';
+        data['kw'] = kw > 0.0 ? kw : 0.0;
       }
 
       // บันทึกคำขอลงในคอลเล็กชันที่เหมาะสม
       await FirebaseFirestore.instance
           .collection(collectionName)
           .doc(newRequestId)
-          .set(data);
+          .set(
+              data,
+              SetOptions(
+                  merge: true)); // ใช้ merge เพื่อไม่เขียนทับข้อมูลที่มีอยู่
 
       // อัปเดตเอกสาร metadata ด้วยการใช้ set และ merge: true
       await metadataRef.set({
@@ -1652,463 +1680,473 @@ Future<List<Map<String, dynamic>>> _fetchReviewsFromFirestore(String placeId) as
     }
   }
 
-void _showEVStationDetails(
-    Map<String, dynamic> place, gms.LatLng placeLatLng) {
-  TextEditingController _reviewController = TextEditingController();
-  int _rating = 5;
-  String? userId = FirebaseAuth.instance.currentUser?.uid;
-  String username =
-      FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
+  void _showEVStationDetails(
+      Map<String, dynamic> place, gms.LatLng placeLatLng) {
+    TextEditingController _reviewController = TextEditingController();
+    int _rating = 5;
+    String? userId = FirebaseAuth.instance.currentUser?.uid;
+    String username =
+        FirebaseAuth.instance.currentUser?.displayName ?? 'Anonymous';
 
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: Colors.transparent,
-    isScrollControlled: true,
-    builder: (BuildContext context) {
-      return DraggableScrollableSheet(
-        expand: false,
-        builder: (context, scrollController) {
-          return Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-            ),
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: SingleChildScrollView(
-              controller: scrollController,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // แสดงรูปภาพตามแหล่งที่มา
-                  if (place['source'] == 'google' &&
-                      place.containsKey('photo_references') &&
-                      (place['photo_references'] as List).isNotEmpty)
-                    CarouselSlider(
-                      options: CarouselOptions(
-                        height: 200.0,
-                        enableInfiniteScroll: false,
-                        enlargeCenterPage: true,
-                      ),
-                      items:
-                          (place['photo_references'] as List).map((photoRef) {
-                        String imageUrl = getPhotoUrl(photoRef, 400);
-                        print('Google Image URL: $imageUrl');
-                        return Builder(
-                          builder: (BuildContext context) {
-                            return CachedNetworkImage(
-                              imageUrl: imageUrl,
-                              imageBuilder: (context, imageProvider) =>
-                                  Container(
-                                width: MediaQuery.of(context).size.width,
-                                margin: EdgeInsets.symmetric(horizontal: 5.0),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(12.0),
-                                  image: DecorationImage(
-                                    image: imageProvider,
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                              placeholder: (context, url) => Center(
-                                child: CircularProgressIndicator(),
-                              ),
-                              errorWidget: (context, url, error) {
-                                print('Error loading Google image: $error');
-                                return Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.error, color: Colors.red),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      'Failed to load image',
-                                      style: TextStyle(color: Colors.red),
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (BuildContext context) {
+        return DraggableScrollableSheet(
+          expand: false,
+          builder: (context, scrollController) {
+            return Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // แสดงรูปภาพตามแหล่งที่มา
+                      if (place['source'] == 'google' &&
+                          place.containsKey('photo_references') &&
+                          (place['photo_references'] as List).isNotEmpty)
+                        CarouselSlider(
+                          options: CarouselOptions(
+                            height: 200.0,
+                            enableInfiniteScroll: false,
+                            enlargeCenterPage: true,
+                          ),
+                          items: (place['photo_references'] as List)
+                              .map((photoRef) {
+                            String imageUrl = getPhotoUrl(photoRef, 400);
+                            print('Google Image URL: $imageUrl');
+                            return Builder(
+                              builder: (BuildContext context) {
+                                return CachedNetworkImage(
+                                  imageUrl: imageUrl,
+                                  imageBuilder: (context, imageProvider) =>
+                                      Container(
+                                    width: MediaQuery.of(context).size.width,
+                                    margin:
+                                        EdgeInsets.symmetric(horizontal: 5.0),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12.0),
+                                      image: DecorationImage(
+                                        image: imageProvider,
+                                        fit: BoxFit.cover,
+                                      ),
                                     ),
-                                  ],
+                                  ),
+                                  placeholder: (context, url) => Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                  errorWidget: (context, url, error) {
+                                    print('Error loading Google image: $error');
+                                    return Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.error, color: Colors.red),
+                                        SizedBox(height: 8),
+                                        Text(
+                                          'Failed to load image',
+                                          style: TextStyle(color: Colors.red),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 );
                               },
                             );
-                          },
-                        );
-                      }).toList(),
-                    )
-                  else if (place['source'] == 'firestore' &&
-                      place.containsKey('image_url') &&
-                      place['image_url'].isNotEmpty)
-                    CachedNetworkImage(
-                      imageUrl: place['image_url'],
-                      height: 200,
-                      width: double.infinity,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) =>
-                          Center(child: CircularProgressIndicator()),
-                      errorWidget: (context, url, error) =>
-                          Icon(Icons.error, color: Colors.red),
-                    ),
-                  if (place['source'] == 'firestore' &&
-                      (!place.containsKey('image_url') ||
-                          place['image_url'].isEmpty))
-                    SizedBox.shrink(), // ไม่แสดงอะไรถ้าไม่มีรูป
-                  SizedBox(height: 12),
-                  // ชื่อสถานี EV
-                  Row(
-                    children: [
-                      Icon(Icons.ev_station,
-                          color: Colors.blueAccent, size: 24),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          place['name'] ?? 'No name available',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blueAccent,
-                          ),
-                          overflow: TextOverflow.ellipsis,
+                          }).toList(),
+                        )
+                      else if (place['source'] == 'firestore' &&
+                          place.containsKey('image_url') &&
+                          place['image_url'].isNotEmpty)
+                        CachedNetworkImage(
+                          imageUrl: place['image_url'],
+                          height: 200,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) =>
+                              Center(child: CircularProgressIndicator()),
+                          errorWidget: (context, url, error) =>
+                              Icon(Icons.error, color: Colors.red),
                         ),
+                      if (place['source'] == 'firestore' &&
+                          (!place.containsKey('image_url') ||
+                              place['image_url'].isEmpty))
+                        SizedBox.shrink(), // ไม่แสดงอะไรถ้าไม่มีรูป
+                      SizedBox(height: 12),
+                      // ชื่อสถานี EV
+                      Row(
+                        children: [
+                          Icon(Icons.ev_station,
+                              color: Colors.blueAccent, size: 24),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              place['name'] ?? 'No name available',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blueAccent,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  SizedBox(height: 12),
+                      SizedBox(height: 12),
 
-                  // ที่อยู่
-                  if (place['address'] != null)
-                    Row(
-                      children: [
-                        Icon(Icons.location_on,
-                            color: Colors.redAccent, size: 20),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            place['address'],
-                            style: TextStyle(fontSize: 14),
-                          ),
-                        ),
-                      ],
-                    ),
-                  SizedBox(height: 8),
-
-                  // หมายเลขโทรศัพท์
-                  if (place['phone'] != null &&
-                      place['phone'].toString().isNotEmpty)
-                    Row(
-                      children: [
-                        Icon(Icons.phone, color: Colors.green, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          place['phone'],
-                          style: TextStyle(fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  if (place['phone'] != null &&
-                      place['phone'].toString().isNotEmpty)
-                    SizedBox(height: 8),
-
-                  // เวลาทำการ
-                  if (place['open_hours'] != null)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                      // ที่อยู่
+                      if (place['address'] != null)
                         Row(
                           children: [
-                            Icon(Icons.access_time,
-                                color: Colors.orange, size: 20),
+                            Icon(Icons.location_on,
+                                color: Colors.redAccent, size: 20),
                             SizedBox(width: 8),
-                            Text(
-                              'Opening Hours',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
+                            Expanded(
+                              child: Text(
+                                place['address'],
+                                style: TextStyle(fontSize: 14),
                               ),
                             ),
                           ],
                         ),
-                        SizedBox(height: 4),
-                        if (place['open_hours'] is List)
-                          ...List.generate(
-                            (place['open_hours'] as List).length,
-                            (index) => Text(
-                              place['open_hours'][index],
+                      SizedBox(height: 8),
+
+                      // หมายเลขโทรศัพท์
+                      if (place['phone'] != null &&
+                          place['phone'].toString().isNotEmpty)
+                        Row(
+                          children: [
+                            Icon(Icons.phone, color: Colors.green, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              place['phone'],
                               style: TextStyle(fontSize: 14),
                             ),
-                          )
-                        else if (place['open_hours'] is String)
-                          Text(
-                            place['open_hours'],
-                            style: TextStyle(fontSize: 14),
-                          ),
-                      ],
-                    ),
-                  if (place['open_hours'] != null) SizedBox(height: 8),
-
-                  // ประเภทการชาร์จ
-                  if (place['charging_type'] != null)
-                    Row(
-                      children: [
-                        Icon(Icons.electrical_services,
-                            color: Colors.deepPurpleAccent, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'Charging Type: ${place['charging_type']}',
-                          style: TextStyle(fontSize: 14),
+                          ],
                         ),
-                      ],
-                    ),
-                  if (place['charging_type'] != null) SizedBox(height: 8),
+                      if (place['phone'] != null &&
+                          place['phone'].toString().isNotEmpty)
+                        SizedBox(height: 8),
 
-                  // กำลังไฟฟ้า (kW)
-                  if (place['kw'] != null)
-                    Row(
-                      children: [
-                        Icon(Icons.bolt,
-                            color: Colors.yellow[700], size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'Power: ${place['kw']} kW',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  if (place['kw'] != null) SizedBox(height: 8),
-
-                  Divider(thickness: 1.0),
-                  SizedBox(height: 8),
-
-                  // รีวิว
-                  FutureBuilder(
-                    future: _fetchCombinedReviews(place['place_id']),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState ==
-                          ConnectionState.waiting) {
-                        return Center(child: CircularProgressIndicator());
-                      }
-
-                      if (snapshot.hasData) {
-                        List<Map<String, dynamic>> reviews =
-                            snapshot.data as List<Map<String, dynamic>>;
-
-                        if (reviews.isEmpty) {
-                          return Text("No reviews yet.");
-                        } else {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Reviews:',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
+                      // เวลาทำการ
+                      if (place['open_hours'] != null)
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.access_time,
+                                    color: Colors.orange, size: 20),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Opening Hours',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
                                 ),
+                              ],
+                            ),
+                            SizedBox(height: 4),
+                            if (place['open_hours'] is List)
+                              ...List.generate(
+                                (place['open_hours'] as List).length,
+                                (index) => Text(
+                                  place['open_hours'][index],
+                                  style: TextStyle(fontSize: 14),
+                                ),
+                              )
+                            else if (place['open_hours'] is String)
+                              Text(
+                                place['open_hours'],
+                                style: TextStyle(fontSize: 14),
                               ),
-                              SizedBox(height: 8),
-                              ...reviews.map((review) {
-                                return Card(
-                                  margin: EdgeInsets.symmetric(vertical: 4),
-                                  child: Padding(
-                                    padding: EdgeInsets.all(8),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
+                          ],
+                        ),
+                      if (place['open_hours'] != null) SizedBox(height: 8),
+
+                      // ประเภทการชาร์จ
+                      if (place['charging_type'] != null)
+                        Row(
+                          children: [
+                            Icon(Icons.electrical_services,
+                                color: Colors.deepPurpleAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Charging Type: ${place['charging_type']}',
+                              style: TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      if (place['charging_type'] != null) SizedBox(height: 8),
+
+                      // กำลังไฟฟ้า (kW)
+                      if (place['kw'] != null)
+                        Row(
+                          children: [
+                            Icon(Icons.bolt,
+                                color: Colors.yellow[700], size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Power: ${place['kw']} kW',
+                              style: TextStyle(fontSize: 14),
+                            ),
+                          ],
+                        ),
+                      if (place['kw'] != null) SizedBox(height: 8),
+
+                      Divider(thickness: 1.0),
+                      SizedBox(height: 8),
+
+                      // รีวิว
+                      FutureBuilder(
+                        future: _fetchCombinedReviews(place['place_id']),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(child: CircularProgressIndicator());
+                          }
+
+                          if (snapshot.hasData) {
+                            List<Map<String, dynamic>> reviews =
+                                snapshot.data as List<Map<String, dynamic>>;
+
+                            if (reviews.isEmpty) {
+                              return Text("No reviews yet.");
+                            } else {
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Reviews:',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  SizedBox(height: 8),
+                                  ...reviews.map((review) {
+                                    return Card(
+                                      margin: EdgeInsets.symmetric(vertical: 4),
+                                      child: Padding(
+                                        padding: EdgeInsets.all(8),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
                                           children: [
-                                            CircleAvatar(
-                                              backgroundImage:
-                                                  review['profile_photo_url'] !=
-                                                          null
+                                            Row(
+                                              children: [
+                                                CircleAvatar(
+                                                  backgroundImage: (review[
+                                                                  'profile_photo_url'] !=
+                                                              null &&
+                                                          review['profile_photo_url']
+                                                              .isNotEmpty)
                                                       ? NetworkImage(review[
                                                           'profile_photo_url'])
-                                                      : null,
-                                              radius: 14,
+                                                      : (review['profileImageUrl'] !=
+                                                                  null &&
+                                                              review['profileImageUrl']
+                                                                  .isNotEmpty
+                                                          ? NetworkImage(review[
+                                                              'profileImageUrl'])
+                                                          : null),
+                                                  radius: 14,
+                                                ),
+                                                SizedBox(width: 8),
+                                                Text(
+                                                  review['username'] ??
+                                                      'Unknown user',
+                                                  style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                            SizedBox(width: 8),
+                                            SizedBox(height: 4),
+                                            Row(
+                                              children:
+                                                  List.generate(5, (index) {
+                                                return Icon(
+                                                  index <
+                                                          (review['rating'] ??
+                                                              0)
+                                                      ? Icons.star
+                                                      : Icons.star_border,
+                                                  color: Colors.amber,
+                                                  size: 16,
+                                                );
+                                              }),
+                                            ),
+                                            SizedBox(height: 4),
                                             Text(
-                                              review['username'] ??
-                                                  'Unknown user',
-                                              style: TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                              ),
+                                              review['review'] ??
+                                                  'No review text available',
+                                              style: TextStyle(fontSize: 14),
                                             ),
                                           ],
                                         ),
-                                        SizedBox(height: 4),
-                                        Row(
-                                          children: List.generate(5, (index) {
-                                            return Icon(
-                                              index <
-                                                      (review['rating'] ?? 0)
-                                                  ? Icons.star
-                                                  : Icons.star_border,
-                                              color: Colors.amber,
-                                              size: 16,
-                                            );
-                                          }),
-                                        ),
-                                        SizedBox(height: 4),
-                                        Text(
-                                          review['review'] ??
-                                              'No review text available',
-                                          style: TextStyle(fontSize: 14),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              }).toList(),
-                            ],
+                                      ),
+                                    );
+                                  }).toList(),
+                                ],
+                              );
+                            }
+                          } else if (snapshot.hasError) {
+                            return Text("Error: ${snapshot.error}");
+                          } else {
+                            return CircularProgressIndicator();
+                          }
+                        },
+                      ),
+                      Divider(thickness: 1.0),
+                      SizedBox(height: 8),
+
+                      // ระบบการให้คะแนน (Rating stars)
+                      Text(
+                        'Rate this station:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: Colors.blueAccent,
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Row(
+                        children: List.generate(5, (index) {
+                          return IconButton(
+                            icon: Icon(
+                              index < _rating ? Icons.star : Icons.star_border,
+                              color: Colors.amber,
+                              size: 24,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _rating = index + 1;
+                              });
+                            },
                           );
-                        }
-                      } else if (snapshot.hasError) {
-                        return Text("Error: ${snapshot.error}");
-                      } else {
-                        return CircularProgressIndicator();
-                      }
-                    },
-                  ),
-                  Divider(thickness: 1.0),
-                  SizedBox(height: 8),
+                        }),
+                      ),
+                      SizedBox(height: 8),
 
-                  // ระบบการให้คะแนน (Rating stars)
-                  Text(
-                    'Rate this station:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: Colors.blueAccent,
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Row(
-                    children: List.generate(5, (index) {
-                      return IconButton(
-                        icon: Icon(
-                          index < _rating ? Icons.star : Icons.star_border,
-                          color: Colors.amber,
-                          size: 24,
+                      // ฟอร์มรีวิว
+                      TextField(
+                        controller: _reviewController,
+                        decoration: InputDecoration(
+                          labelText: 'Write your review',
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: EdgeInsets.symmetric(
+                            vertical: 8,
+                            horizontal: 12,
+                          ),
                         ),
-                        onPressed: () {
-                          setState(() {
-                            _rating = index + 1;
-                          });
-                        },
-                      );
-                    }),
-                  ),
-                  SizedBox(height: 8),
-
-                  // ฟอร์มรีวิว
-                  TextField(
-                    controller: _reviewController,
-                    decoration: InputDecoration(
-                      labelText: 'Write your review',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        maxLines: 1,
+                        style: TextStyle(fontSize: 14),
                       ),
-                      contentPadding: EdgeInsets.symmetric(
-                        vertical: 8,
-                        horizontal: 12,
-                      ),
-                    ),
-                    maxLines: 1,
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  SizedBox(height: 12),
+                      SizedBox(height: 12),
 
-                  // ปุ่ม Submit รีวิว
-                  OutlinedButton(
-                    onPressed: () async {
-                      await _submitReview(
-                        placeId: place['place_id'],
-                        type: place['type'] ?? 'ev_station',
-                        reviewText: _reviewController.text,
-                        rating: _rating,
-                        userId: userId,
-                        username: username,
-                      );
-                      Navigator.pop(context);
-                    },
-                    child: Text(
-                      'Submit',
-                      style:
-                          TextStyle(color: Colors.blueAccent, fontSize: 16),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      side: BorderSide(color: Colors.blueAccent),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8.0),
-                      ),
-                      padding: EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                  SizedBox(height: 12),
-
-                  // ปุ่ม Favorite และ Go
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          widget.onAddToFavorites(place);
+                      // ปุ่ม Submit รีวิว
+                      OutlinedButton(
+                        onPressed: () async {
+                          await _submitReview(
+                            placeId: place['place_id'],
+                            type: place['type'] ?? 'ev_station',
+                            reviewText: _reviewController.text,
+                            rating: _rating,
+                            userId: userId,
+                            username: username,
+                          );
                           Navigator.pop(context);
                         },
-                        icon: Icon(Icons.favorite_border,
-                            color: Colors.blueAccent),
-                        label: Text(
-                          'Favorite',
-                          style: TextStyle(color: Colors.blueAccent),
+                        child: Text(
+                          'Submit',
+                          style:
+                              TextStyle(color: Colors.blueAccent, fontSize: 16),
                         ),
                         style: OutlinedButton.styleFrom(
                           side: BorderSide(color: Colors.blueAccent),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8.0),
                           ),
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 20),
+                          padding: EdgeInsets.symmetric(vertical: 10),
                         ),
                       ),
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          widget.onAddToHistory({
-                            'name': place['name'] ?? 'Unknown',
-                            'address': place['address'] ?? 'Unknown',
-                            'phone': place['phone'] ?? 'Unknown',
-                            'lat': placeLatLng.latitude,
-                            'lng': placeLatLng.longitude,
-                            'type': place['type'] ?? 'Unknown',
-                            'date': DateTime.now().toString(),
-                            'time': DateTime.now().toString().split(' ')[1],
-                          });
-                          Navigator.pop(context);
-                          _fetchRouteAndNavigate(placeLatLng);
-                        },
-                        icon:
-                            Icon(Icons.directions, color: Colors.blueAccent),
-                        label: Text(
-                          'Go',
-                          style: TextStyle(color: Colors.blueAccent),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: Colors.blueAccent),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8.0),
+                      SizedBox(height: 12),
+
+                      // ปุ่ม Favorite และ Go
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              widget.onAddToFavorites(place);
+                              Navigator.pop(context);
+                            },
+                            icon: Icon(Icons.favorite_border,
+                                color: Colors.blueAccent),
+                            label: Text(
+                              'Favorite',
+                              style: TextStyle(color: Colors.blueAccent),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: Colors.blueAccent),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8.0),
+                              ),
+                              padding: EdgeInsets.symmetric(
+                                  vertical: 10, horizontal: 20),
+                            ),
                           ),
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 20),
-                        ),
+                          OutlinedButton.icon(
+                            onPressed: () {
+                              widget.onAddToHistory({
+                                'name': place['name'] ?? 'Unknown',
+                                'address': place['address'] ?? 'Unknown',
+                                'phone': place['phone'] ?? 'Unknown',
+                                'lat': placeLatLng.latitude,
+                                'lng': placeLatLng.longitude,
+                                'type': place['type'] ?? 'Unknown',
+                                'date': DateTime.now().toString(),
+                                'time': DateTime.now().toString().split(' ')[1],
+                              });
+                              Navigator.pop(context);
+                              _fetchRouteAndNavigate(placeLatLng);
+                            },
+                            icon: Icon(Icons.directions,
+                                color: Colors.blueAccent),
+                            label: Text(
+                              'Go',
+                              style: TextStyle(color: Colors.blueAccent),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: BorderSide(color: Colors.blueAccent),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8.0),
+                              ),
+                              padding: EdgeInsets.symmetric(
+                                  vertical: 10, horizontal: 20),
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-          ));
+                ));
           },
         );
       },
     );
-}
-
-
+  }
 
   Future<List<Map<String, dynamic>>> _calculateAndSortPlacesByDistance(
       List<Map<String, dynamic>> suggestions) async {
@@ -2223,6 +2261,9 @@ void _showEVStationDetails(
                                   children: [
                                     ListTile(
                                       title: Text(historyItem),
+                                      onTap: () {
+                                        _searchAllPlaces(historyItem);
+                                      },
                                       trailing: IconButton(
                                         icon: Icon(Icons.delete),
                                         onPressed: () {
@@ -2596,6 +2637,7 @@ void _showEVStationDetails(
                   left: 16,
                   child: FloatingActionButton(
                     onPressed: () => _showSearchScreen(context),
+                    heroTag: 'search', // heroTag สำหรับปุ่มค้นหา
                     backgroundColor: Colors.white,
                     shape: CircleBorder(),
                     child: Icon(
@@ -2610,6 +2652,7 @@ void _showEVStationDetails(
                   right: 16,
                   child: FloatingActionButton(
                     onPressed: _showAddPlaceDialog,
+                    heroTag: 'add', // heroTag สำหรับปุ่มเพิ่มสถานที่
                     backgroundColor: Colors.white,
                     shape: CircleBorder(),
                     child: Icon(
@@ -2624,6 +2667,8 @@ void _showEVStationDetails(
                   right: 16,
                   child: FloatingActionButton(
                     onPressed: _getCurrentLocation,
+                    heroTag:
+                        'currentLocation', // heroTag สำหรับปุ่มตำแหน่งปัจจุบัน
                     backgroundColor: Colors.white,
                     shape: CircleBorder(), // ใช้รูปร่างวงกลม
                     child: Icon(
@@ -2638,6 +2683,7 @@ void _showEVStationDetails(
                   left: 16,
                   child: FloatingActionButton(
                     onPressed: _showFilterDialog,
+                    heroTag: 'filter', // heroTag สำหรับปุ่มกรองข้อมูล
                     backgroundColor: Colors.white,
                     shape: CircleBorder(),
                     child: Icon(

@@ -24,10 +24,20 @@ class _ProfilePageState extends State<ProfilePage> {
   TextEditingController _emailController = TextEditingController();
   TextEditingController _phoneController = TextEditingController();
 
+  late Future<void> _profileFuture;
+
   @override
   void initState() {
     super.initState();
-    _loadUserProfile();
+    _profileFuture = _loadUserProfile();
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    super.dispose();
   }
 
   Future<String?> _getUserId() async {
@@ -44,7 +54,7 @@ class _ProfilePageState extends State<ProfilePage> {
         DocumentSnapshot userSnapshot = await userDocRef.get();
 
         if (!userSnapshot.exists) {
-          // สร้างเอกสารใหม่ถ้าไม่พบ
+          // Create a new document if not found
           await userDocRef.set({
             'username': '',
             'email': FirebaseAuth.instance.currentUser?.email ?? '',
@@ -54,8 +64,9 @@ class _ProfilePageState extends State<ProfilePage> {
           userSnapshot = await userDocRef.get();
         }
 
+        var userData = userSnapshot.data() as Map<String, dynamic>?;
+
         setState(() {
-          var userData = userSnapshot.data() as Map<String, dynamic>?;
           userName = userData?['username'] ?? '';
           userEmail = userData?['email'] ?? '';
           userPhone = userData?['phone'] ?? '';
@@ -67,18 +78,35 @@ class _ProfilePageState extends State<ProfilePage> {
         });
       } catch (e) {
         print('Error loading user profile: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading profile data')),
+        );
+        // Optionally, you can rethrow the error to let FutureBuilder handle it
+        // throw e;
       }
+    } else {
+      // Handle the case where the user is not logged in
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('User not logged in')),
+      );
     }
   }
 
   Future<void> _pickImage() async {
-    final pickedFile = await picker.pickImage(source: ImageSource.gallery);
-    setState(() {
+    try {
+      final pickedFile = await picker.pickImage(source: ImageSource.gallery);
       if (pickedFile != null) {
-        _image = File(pickedFile.path);
-        _uploadProfileImage();
+        setState(() {
+          _image = File(pickedFile.path);
+        });
+        await _uploadProfileImage();
       }
-    });
+    } catch (e) {
+      print('Error picking image: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to pick image')),
+      );
+    }
   }
 
   Future<void> _uploadProfileImage() async {
@@ -89,7 +117,7 @@ class _ProfilePageState extends State<ProfilePage> {
             FirebaseStorage.instance.ref().child('profile_images/$userId.jpg');
         UploadTask uploadTask = storageReference.putFile(_image!);
 
-        await uploadTask.whenComplete(() => null);
+        await uploadTask;
         String downloadUrl = await storageReference.getDownloadURL();
 
         await FirebaseFirestore.instance
@@ -113,26 +141,10 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  Future<void> _updateUserProfile() async {
-    String? userId = FirebaseAuth.instance.currentUser?.uid;
-
-    if (userId != null) {
-      try {
-        await FirebaseFirestore.instance.collection('users').doc(userId).update({
-          'username': _usernameController.text,
-          'email': _emailController.text,
-          'phone': _phoneController.text,
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Profile updated successfully')),
-        );
-      } catch (e) {
-        print('Error updating profile: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update profile')),
-        );
-      }
-    }
+  Future<void> _refreshProfile() async {
+    setState(() {
+      _profileFuture = _loadUserProfile();
+    });
   }
 
   @override
@@ -158,124 +170,152 @@ class _ProfilePageState extends State<ProfilePage> {
           },
         ),
       ),
-      body: userName == null
-          ? Center(child: CircularProgressIndicator())
-          : Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Stack(
+      body: FutureBuilder<void>(
+        future: _profileFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            // Show CircularProgressIndicator while loading
+            return Center(child: CircularProgressIndicator());
+          } else if (snapshot.hasError) {
+            // Show error message if there's an error
+            return Center(
+              child: Text(
+                'Error loading profile data',
+                style: TextStyle(color: Colors.red),
+              ),
+            );
+          } else {
+            // Show profile data when loading is complete
+            return RefreshIndicator(
+              onRefresh: _refreshProfile,
+              child: SingleChildScrollView(
+                physics: AlwaysScrollableScrollPhysics(),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min, // Ensures Column takes minimum space
                     children: [
-                      CircleAvatar(
-                        radius: 70,
-                        backgroundImage: profileImageUrl != null &&
-                                profileImageUrl!.isNotEmpty
-                            ? CachedNetworkImageProvider(profileImageUrl!)
-                            : AssetImage('assets/images/default_avatar.png')
-                                as ImageProvider,
-                        backgroundColor: Colors.grey.shade300,
-                      ),
-                      Positioned(
-                        bottom: 0,
-                        right: 0,
-                        child: GestureDetector(
-                          onTap: _pickImage,
-                          child: CircleAvatar(
-                            backgroundColor: Colors.blue,
-                            radius: 20,
-                            child: Icon(
-                              Icons.camera_alt,
-                              color: Colors.white,
-                              size: 20,
+                      Stack(
+                        children: [
+                          CircleAvatar(
+                            radius: 70,
+                            backgroundImage: profileImageUrl != null &&
+                                    profileImageUrl!.isNotEmpty
+                                ? CachedNetworkImageProvider(profileImageUrl!)
+                                : AssetImage('assets/images/default_avatar.png')
+                                    as ImageProvider,
+                            backgroundColor: Colors.grey.shade300,
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: GestureDetector(
+                              onTap: _pickImage,
+                              child: CircleAvatar(
+                                backgroundColor: Colors.blue,
+                                radius: 20,
+                                child: Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
                             ),
                           ),
+                        ],
+                      ),
+                      SizedBox(height: 24), // Fixed spacing instead of Spacer
+                      Text(
+                        userName ?? 'No Name',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black,
                         ),
                       ),
+                      SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                        child: Row(
+                          children: [
+                            Icon(Icons.email, color: Colors.black54),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                userEmail ?? 'No Email',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                        child: Row(
+                          children: [
+                            Icon(Icons.phone, color: Colors.black54),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                userPhone ?? 'No Phone',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: 24), // Replace Spacer with SizedBox
+                      ElevatedButton.icon(
+                        onPressed: () async {
+                          final updated = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => EditProfilePage(
+                                usernameController: _usernameController,
+                                emailController: _emailController,
+                                phoneController: _phoneController,
+                              ),
+                            ),
+                          );
+
+                          if (updated == true) {
+                            await _refreshProfile();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Profile updated successfully')),
+                            );
+                          }
+                        },
+                        icon: Icon(Icons.edit, color: Colors.white),
+                        label: Text('Edit Profile'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.blueAccent,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          padding:
+                              EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+                          elevation: 4,
+                          shadowColor: Colors.black.withOpacity(0.3),
+                        ),
+                      ),
+                      SizedBox(height: 20), // Additional spacing if needed
                     ],
                   ),
-                  SizedBox(height: 24),
-                  Text(
-                    userName ?? 'No Name',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                    child: Row(
-                      children: [
-                        Icon(Icons.email, color: Colors.black54),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            userEmail ?? 'No Email',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                    child: Row(
-                      children: [
-                        Icon(Icons.phone, color: Colors.black54),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            userPhone ?? 'No Phone',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.black87,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Spacer(),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      final updated = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => EditProfilePage(
-                            usernameController: _usernameController,
-                            emailController: _emailController,
-                            phoneController: _phoneController,
-                          ),
-                        ),
-                      );
-
-                      if (updated == true) {
-                        await _loadUserProfile();
-                      }
-                    },
-                    icon: Icon(Icons.edit, color: Colors.white),
-                    label: Text('Edit Profile'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                      padding:
-                          EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-                      elevation: 4,
-                      shadowColor: Colors.black.withOpacity(0.3),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
+            );
+          }
+        },
+      ),
     );
   }
 }
