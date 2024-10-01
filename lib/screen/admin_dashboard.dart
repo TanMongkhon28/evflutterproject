@@ -54,7 +54,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
             ),
           ],
         ),
-        backgroundColor: const Color.fromARGB(255, 3, 33, 153), // เปลี่ยนสีธีม
+        backgroundColor: const Color.fromARGB(255, 3, 33, 153),
         actions: [
           PopupMenuButton<int>(
             icon: Icon(Icons.more_vert, color: Colors.white),
@@ -80,7 +80,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         children: [
           Column(
             children: [
-              // Dropdown สำหรับเลือกประเภทสถานที่
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Card(
@@ -94,23 +93,38 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                     child: DropdownButtonFormField<String>(
                       value: selectedType,
                       items: placeTypes.map((type) {
+                        IconData icon;
+                        switch (type) {
+                          case 'ev_station':
+                            icon = Icons.ev_station;
+                            break;
+                          case 'restaurant':
+                            icon = Icons.restaurant;
+                            break;
+                          case 'cafe':
+                            icon = Icons.local_cafe;
+                            break;
+                          case 'store':
+                            icon = Icons.store;
+                            break;
+                          case 'gas_station':
+                            icon = Icons.local_gas_station;
+                            break;
+                          default:
+                            icon = Icons.place;
+                        }
                         return DropdownMenuItem<String>(
                           value: type,
                           child: Row(
                             children: [
-                              Icon(
-                                type == 'ev_station'
-                                    ? Icons.ev_station
-                                    : Icons.place,
-                                color: Colors.lightBlueAccent, // เปลี่ยนสีไอคอน
-                              ),
+                              Icon(icon, color: Colors.lightBlueAccent),
                               SizedBox(width: 10),
                               Text(
                                 _getTypeLabel(type),
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.black, // สีข้อความ
+                                  color: Colors.black,
                                 ),
                               ),
                             ],
@@ -127,7 +141,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                       icon: Icon(
                         Icons.arrow_drop_down,
-                        color: Colors.lightBlueAccent, // เปลี่ยนสีลูกศร
+                        color: Colors.lightBlueAccent,
                       ),
                       dropdownColor: Colors.white,
                       borderRadius: BorderRadius.circular(15),
@@ -137,9 +151,10 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
               Expanded(
                 child: FutureBuilder<QuerySnapshot>(
-                  // เปลี่ยนการเรียกใช้คอลเล็กชันเป็น 'places' และใช้ฟิลด์ 'type' ในการกรอง
                   future: _firestore
-                      .collection('places')
+                      .collection(selectedType == 'ev_station'
+                          ? 'ev_stations'
+                          : 'places')
                       .where('type', isEqualTo: selectedType)
                       .get(),
                   builder: (context, snapshot) {
@@ -182,7 +197,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // แสดงภาพถ้ามี
                                 if (placeData?['image_url'] != null &&
                                     placeData!['image_url'].isNotEmpty)
                                   Padding(
@@ -201,7 +215,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                                   style: TextStyle(fontSize: 16),
                                 ),
                                 SizedBox(height: 4),
-                                // แสดงข้อมูลเพิ่มเติมถ้าเป็นสถานี EV
                                 if (selectedType == 'ev_station') ...[
                                   Text(
                                     'Charging Type: ${placeData?['charging_type'] ?? 'N/A'}',
@@ -243,7 +256,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               ),
             ],
           ),
-          // เพิ่มปุ่ม Manage Users
           Positioned(
             bottom: 80,
             right: 16,
@@ -254,7 +266,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                   MaterialPageRoute(builder: (context) => ManageUsersPage()),
                 );
               },
-              heroTag: 'manageUsers', // กำหนด heroTag ที่ไม่ซ้ำกัน
+              heroTag: 'manageUsers',
               backgroundColor: Colors.white,
               shape: CircleBorder(),
               child: Icon(
@@ -269,7 +281,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddPlaceDialog,
-        heroTag: 'addPlace', // กำหนด heroTag ที่ไม่ซ้ำกัน
+        heroTag: 'addPlace',
         child: Icon(Icons.add),
         backgroundColor: Colors.lightBlueAccent,
         tooltip: 'Add New Place',
@@ -591,11 +603,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           request.data() as Map<String, dynamic>?;
 
       String collection = request.reference.parent.id;
+      String type = requestData?['type']?.toString() ?? 'unknown';
 
-      String targetCollection =
-          (collection == 'station_requests') ? 'ev_stations' : 'places';
+      // กำหนดคอลเล็กชันเป้าหมายโดยใช้ทั้งคอลเล็กชันต้นทางและประเภทของสถานที่
+      String targetCollection;
+      if (collection == 'station_requests' && type == 'ev_station') {
+        targetCollection = 'ev_stations';
+      } else if (collection == 'place_requests' && type != 'ev_station') {
+        targetCollection = 'places';
+      } else {
+        // หากข้อมูลไม่ตรงกัน ให้แสดงข้อผิดพลาด
+        throw Exception('Mismatch between request collection and place type.');
+      }
 
-      // กำหนดฟิลด์ที่จำเป็นพร้อมค่าเริ่มต้น
+      // ฟิลด์ข้อมูลพื้นฐาน
       Map<String, dynamic> dataToAdd = {
         'name': requestData?['name']?.toString() ?? 'No name provided',
         'address': requestData?['address']?.toString() ?? 'No address provided',
@@ -604,23 +625,26 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
         'phone': requestData?['phone']?.toString() ?? 'No phone provided',
         'open_hours':
             requestData?['open_hours']?.toString() ?? 'No open hours provided',
-        'type': requestData?['type']?.toString() ?? 'unknown',
-        'status': 'active', // หรือสถานะอื่นที่เหมาะสม
+        'image_url': requestData?['image_url']?.toString() ?? '',
+        'type': type,
+        'status': 'active',
         'created_at': FieldValue.serverTimestamp(),
       };
 
-      // ถ้าเป็น EV Station เพิ่มฟิลด์เพิ่มเติม
-      if (collection == 'station_requests') {
+      // เพิ่มฟิลด์เพิ่มเติมสำหรับ EV Station
+      if (type == 'ev_station') {
+        dataToAdd['type'] = 'ev_station';
         dataToAdd['charging_type'] =
             requestData?['charging_type']?.toString() ?? 'Unknown';
         dataToAdd['kw'] = requestData?['kw']?.toDouble() ?? 0.0;
-        dataToAdd['image_url'] = requestData?['image_url']?.toString() ?? '';
       }
 
+      // บันทึกข้อมูลไปยังคอลเล็กชันที่ถูกต้อง
       await FirebaseFirestore.instance
           .collection(targetCollection)
           .add(dataToAdd);
 
+      // ลบคำขอที่ได้รับการอนุมัติแล้ว
       await FirebaseFirestore.instance
           .collection(collection)
           .doc(request.id)
@@ -631,7 +655,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              'Request Approved and ${collection == 'station_requests' ? 'EV Station' : 'Place'} added!'),
+              'Request Approved and ${type == 'ev_station' ? 'EV Station' : 'Place'} added!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -639,7 +663,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       print('Error approving request: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to approve request.'),
+          content: Text('Failed to approve request: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -682,7 +706,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     });
   }
 
-  // เมธอดสำหรับแสดง Dialog เพิ่มสถานที่ใหม่
   void _showAddPlaceDialog() {
     final TextEditingController nameController = TextEditingController();
     final TextEditingController addressController = TextEditingController();
@@ -693,7 +716,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
     String tempSelectedType = selectedType;
     String tempSelectedChargingType = 'Type 1';
-    File? _selectedImage; // ตัวแปรเก็บไฟล์ภาพที่เลือก
+    File? _selectedImage;
 
     showDialog(
       context: context,
@@ -729,7 +752,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                     ),
                     SizedBox(height: 20),
-                    // แสดงภาพที่เลือกถ้ามี
                     GestureDetector(
                       onTap: _pickImage,
                       child: _selectedImage != null
@@ -803,7 +825,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                       ),
                     ),
                     SizedBox(height: 10),
-                    // แสดง Charging Type และ Power เฉพาะเมื่อเลือกเป็น EV Station
                     if (tempSelectedType == 'ev_station') ...[
                       DropdownButtonFormField<String>(
                         value: tempSelectedChargingType,
@@ -851,7 +872,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         SizedBox(width: 10),
                         ElevatedButton(
                           onPressed: () async {
-                            // ตรวจสอบฟิลด์ที่จำเป็น
                             if (nameController.text.isEmpty ||
                                 addressController.text.isEmpty ||
                                 latController.text.isEmpty ||
@@ -893,7 +913,6 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
 
                             String imageUrl = '';
                             if (_selectedImage != null) {
-                              // อัปโหลดภาพไปยัง Firebase Storage
                               String fileName =
                                   '${DateTime.now().millisecondsSinceEpoch}.jpg';
                               Reference storageRef = FirebaseStorage.instance
@@ -906,7 +925,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               imageUrl = await snapshot.ref.getDownloadURL();
                             }
 
-                            // กำหนดฟิลด์ที่อาจขาดหายไปด้วยค่าเริ่มต้น
+                            // เลือกคอลเล็กชันตามประเภท
+                            String collectionName =
+                                tempSelectedType == 'ev_station'
+                                    ? 'ev_stations'
+                                    : 'places';
+
                             Map<String, dynamic> dataToAdd = {
                               'name': nameController.text.isNotEmpty
                                   ? nameController.text
@@ -920,14 +944,12 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                               'lat': lat,
                               'lng': lng,
                               'type': tempSelectedType,
-                              'open_hours':
-                                  'No open hours provided', // สามารถเพิ่มฟิลด์นี้ได้หากมีการป้อนข้อมูล
-                              'image_url': imageUrl, // เก็บ URL ของภาพ
-                              'status': 'active', // ตั้งค่าเริ่มต้นสถานะ
+                              'open_hours': 'No open hours provided',
+                              'image_url': imageUrl,
+                              'status': 'active',
                               'created_at': FieldValue.serverTimestamp(),
                             };
 
-                            // ถ้าเป็น EV Station เพิ่มฟิลด์เพิ่มเติม
                             if (tempSelectedType == 'ev_station') {
                               dataToAdd['charging_type'] =
                                   tempSelectedChargingType;
@@ -935,7 +957,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             }
 
                             await FirebaseFirestore.instance
-                                .collection('places')
+                                .collection(collectionName)
                                 .add(dataToAdd);
 
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -947,8 +969,7 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             Navigator.pop(context);
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.lightBlueAccent, // เปลี่ยนสีปุ่ม
+                            backgroundColor: Colors.lightBlueAccent,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(10.0),
                             ),

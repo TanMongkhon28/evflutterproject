@@ -52,6 +52,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? selectedPlace;
   File? _selectedImage;
   List<Map<String, dynamic>> _suggestions = [];
+  gms.LatLng? _destination;
   final suggestions = ValueNotifier<List<Map<String, dynamic>>>([]);
   final ValueNotifier<List<Map<String, dynamic>>> suggestionsNotifier =
       ValueNotifier([]);
@@ -65,11 +66,12 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     _setCustomIcons();
     _checkPermissions().then((_) {
       _getCurrentLocation();
+      _startTrackingUserPosition();
     }).catchError((e) {
       print('Error checking permissions: $e');
     });
+    _loadPlacesFromFirestore();
 
-    // โหลดประวัติการค้นหาเมื่อเริ่มต้น
     _loadSearchHistory();
   }
 
@@ -231,6 +233,13 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         final leg = route['legs'][0];
         final distance =
             leg['distance']['text']; // ระยะทางในรูปแบบข้อความ เช่น '5.2 km'
+        final duration =
+            leg['duration']['text']; // เวลาที่ใช้เดินทาง เช่น '15 mins'
+
+        setState(() {
+          _distanceText = distance;
+          _durationText = duration;
+        });
 
         return distance;
       } else {
@@ -239,6 +248,47 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     } catch (e) {
       print('Error fetching distance: $e');
       return 'Unknown distance';
+    }
+  }
+
+  Timer? _debounceTimer;
+
+  void _startTrackingUserPosition() {
+    Geolocator.getPositionStream().listen((Position position) {
+      setState(() {
+        _currentPosition = gms.LatLng(position.latitude, position.longitude);
+        _debounceUpdateDistance(); // อัปเดตระยะทางแบบ real-time
+        _updatePolyline(); // อัปเดต Polyline บนแผนที่
+      });
+    });
+  }
+
+  void _updatePolyline() async {
+    if (_currentPosition != null && _destination != null) {
+      _fetchRouteAndNavigate(
+          _destination!); // อัปเดตเส้นทางใหม่เมื่อผู้ใช้เคลื่อนที่
+    }
+  }
+
+  void _debounceUpdateDistance() {
+    // ยกเลิกการนับเวลาถ้ามี debounce ที่ยังทำงานอยู่
+    if (_debounceTimer?.isActive ?? false) _debounceTimer?.cancel();
+
+    // เริ่ม debounce 5 วินาที ก่อนอัปเดตระยะทาง
+    _debounceTimer = Timer(const Duration(seconds: 5), () {
+      if (_destination != null && _currentPosition != null) {
+        _updateDistanceToDestination();
+      }
+    });
+  }
+
+  void _updateDistanceToDestination() async {
+    if (_destination != null && _currentPosition != null) {
+      final distance =
+          await _getDistance(_destination!.latitude, _destination!.longitude);
+      setState(() {
+        _distanceText = distance;
+      });
     }
   }
 
@@ -345,8 +395,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         return name.contains(query.toLowerCase());
       }).map((place) {
         return {
-          'description':
-              place['name'] ?? 'No name available', // ใช้ชื่อเป็น description
+          'name': place['name'] ?? 'No name available',
           'place_id': place['place_id'] ?? '', // ใช้ place_id จาก Firestore
           'source': 'firestore', // ระบุแหล่งที่มา
           'lat': place['lat'],
@@ -516,56 +565,55 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   }
 
   Future<void> _loadPlacesFromFirestore() async {
-    setState(() {
-      _places.clear();
-    });
-
     try {
       // ดึงข้อมูลจาก ev_stations
       QuerySnapshot evStationsSnapshot =
           await FirebaseFirestore.instance.collection('ev_stations').get();
-      setState(() {
-        _places.addAll(evStationsSnapshot.docs.map((doc) {
-          return {
-            'place_id': doc.id,
-            'name': doc['name'],
-            'address': doc['address'],
-            'lat': doc['lat'],
-            'lng': doc['lng'],
-            'type': 'ev_station',
-            'charging_type': doc['charging_type'],
-            'kw': doc['kw'],
-            'open_hours': doc['open_hours'],
-            'phone': doc['phone'],
-            'image_url': doc['image_url'] ?? '',
-            'source': 'firestore',
-          };
-        }).toList());
-      });
-      print(
-          "Loaded ${evStationsSnapshot.docs.length} EV stations from Firestore");
+      List<Map<String, dynamic>> evStations =
+          evStationsSnapshot.docs.map((doc) {
+        return {
+          'place_id': doc.id,
+          'name': doc['name'],
+          'address': doc['address'],
+          'lat': doc['lat'],
+          'lng': doc['lng'],
+          'type': 'ev_station',
+          'charging_type': doc['charging_type'],
+          'kw': doc['kw'],
+          'open_hours': doc['open_hours'],
+          'phone': doc['phone'],
+          'image_url': doc['image_url'] ?? '',
+          'source': 'firestore',
+        };
+      }).toList();
 
       // ดึงข้อมูลจาก places
       QuerySnapshot placesSnapshot =
           await FirebaseFirestore.instance.collection('places').get();
+      List<Map<String, dynamic>> places = placesSnapshot.docs.map((doc) {
+        return {
+          'place_id': doc.id,
+          'name': doc['name'],
+          'address': doc['address'],
+          'lat': doc['lat'],
+          'lng': doc['lng'],
+          'type': doc['type'],
+          'open_hours': doc['open_hours'],
+          'phone': doc['phone'],
+          'image_url': doc['image_url'] ?? '',
+          'source': 'firestore',
+        };
+      }).toList();
+
+      // รวมข้อมูลทั้งหมด
       setState(() {
-        _places.addAll(placesSnapshot.docs.map((doc) {
-          return {
-            'place_id': doc.id,
-            'name': doc['name'],
-            'address': doc['address'],
-            'lat': doc['lat'],
-            'lng': doc['lng'],
-            'type': doc['type'],
-            'open_hours': doc['open_hours'],
-            'phone': doc['phone'],
-            'image_url': doc['image_url'] ?? '',
-            'source': 'firestore',
-          };
-        }).toList());
+        _places.addAll(evStations);
+        _places.addAll(places);
+        _originalPlaces = List.from(_places);
       });
 
-      print("Loaded ${placesSnapshot.docs.length} places from Firestore");
+      print(
+          "Loaded ${evStations.length} EV stations and ${places.length} places from Firestore");
     } catch (e) {
       print('Error loading places: $e');
     }
@@ -1517,7 +1565,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  Future<void> _fetchRouteAndNavigate(gms.LatLng destination) async {
+  void _fetchRouteAndNavigate(gms.LatLng destination) async {
     if (_currentPosition == null) return;
 
     final url =
@@ -1534,6 +1582,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         final distance = legs['distance']['text'];
         final duration = legs['duration']['text'];
 
+        // ลบ polyline เก่าก่อนสร้างใหม่
+        _clearRoute();
         _createPolylinesFromEncodedString(polylinePoints);
 
         setState(() {
@@ -1552,8 +1602,9 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   void _createPolylinesFromEncodedString(String encodedPolyline) {
     final List<gms.LatLng> polylineCoordinates =
         _decodePolyline(encodedPolyline);
+
     setState(() {
-      _polylines.clear();
+      _polylines.clear(); // ล้าง polyline เก่าก่อน
       _polylines.add(
         gms.Polyline(
           polylineId: polylineId,
@@ -1619,29 +1670,30 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     String imageUrl,
   ) async {
     try {
+      // ตรวจสอบประเภทของสถานที่ แล้วกำหนดคอลเล็กชันที่เหมาะสม
       String collectionName =
           type == 'ev_station' ? 'station_requests' : 'place_requests';
 
-      // อ้างอิงถึงเอกสาร metadata
+      // อ้างอิงถึงเอกสาร metadata สำหรับการติดตาม lastRequestId
       DocumentReference metadataRef = FirebaseFirestore.instance
           .collection('metadata')
           .doc(type == 'ev_station'
               ? 'station_request_metadata'
               : 'place_request_metadata');
 
-      // ดึงเอกสาร metadata
+      // ดึงเอกสาร metadata เพื่อรับค่า lastRequestId
       DocumentSnapshot metadataSnapshot = await metadataRef.get();
 
-      // กำหนดค่า lastRequestId
+      // กำหนดค่า lastRequestId จาก metadata หรือใช้ค่า 0 ถ้าไม่มีข้อมูล
       int lastRequestId =
           metadataSnapshot.exists && metadataSnapshot.data() != null
               ? metadataSnapshot['lastRequestId']
               : 0;
 
-      // สร้าง request ID ใหม่
+      // สร้าง request ID ใหม่ โดยเพิ่มจาก lastRequestId
       String newRequestId = 'request_id${lastRequestId + 1}';
 
-      // ข้อมูลที่จะบันทึก พร้อมตั้งค่าฟิลด์ที่อาจขาดหายด้วยค่าเริ่มต้น
+      // ข้อมูลที่จะบันทึกในคำขอ
       Map<String, dynamic> data = {
         'name': name.isNotEmpty ? name : 'No name provided',
         'address': address.isNotEmpty ? address : 'No address provided',
@@ -1651,11 +1703,12 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         'open_hours':
             openHours.isNotEmpty ? openHours : 'No open hours provided',
         'type': type.isNotEmpty ? type : 'unknown',
-        'status': 'pending',
+        'status': 'pending', // สถานะเริ่มต้นเป็น pending รอการอนุมัติ
         'requested_at': Timestamp.now(),
         'image_url': imageUrl.isNotEmpty ? imageUrl : '',
       };
 
+      // กรณีเป็นสถานี EV ให้บันทึกข้อมูลเฉพาะเพิ่มเติม
       if (type == 'ev_station') {
         data['charging_type'] =
             chargingType.isNotEmpty ? chargingType : 'Unknown';
@@ -1671,7 +1724,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
               SetOptions(
                   merge: true)); // ใช้ merge เพื่อไม่เขียนทับข้อมูลที่มีอยู่
 
-      // อัปเดตเอกสาร metadata ด้วยการใช้ set และ merge: true
+      // อัปเดตเอกสาร metadata ด้วยการเพิ่มค่า lastRequestId
       await metadataRef.set({
         'lastRequestId': lastRequestId + 1,
       }, SetOptions(merge: true));
