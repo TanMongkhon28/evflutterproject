@@ -1,11 +1,19 @@
+import 'package:evflutterproject/screen/search_station.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FavoritePage extends StatelessWidget {
+  final Function(Map<String, dynamic>) onAddToFavorites;
+  final Function(Map<String, dynamic>) onAddToHistory;
   final CollectionReference _favoritesCollection =
       FirebaseFirestore.instance.collection('users');
+
+  FavoritePage({
+    required this.onAddToFavorites,
+    required this.onAddToHistory,
+  });
 
   Future<String?> _getUserId() async {
     User? user = FirebaseAuth.instance.currentUser;
@@ -121,109 +129,107 @@ class FavoritePage extends StatelessWidget {
                   final phone = place['phone'] ??
                       'No phone available'; // ถ้าไม่มี phone ให้แสดงข้อความนี้แทน
 
-                  return Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // แสดงวันที่เพิ่มเข้ารายการโปรด
-                        Text(
-                          _formatDateTime(place[
-                              'added_at']), // ใช้ 'added_at' และแปลง Timestamp
-                          style: TextStyle(
-                            color: Colors.grey,
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
+                  return InkWell(
+                    onTap: () {
+                      // เมื่อคลิก จะนำทางไปยัง SearchPlacePage พร้อมกับส่งข้อมูลสถานที่
+                      if (place['lat'] != null &&
+                          place['lng'] != null &&
+                          place['name'] != null) {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => SearchPlacePage(
+                              lat: place['lat'],
+                              lng: place['lng'],
+                              name: place['name'],
+                              onAddToFavorites: onAddToFavorites,
+                              onAddToHistory: onAddToHistory,
+                            ),
                           ),
-                        ),
-                        Divider(color: Colors.black54, thickness: 1),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              // ใช้ไอคอนที่แสดงตามประเภท
-                              _getIconForType(place['type'] ?? 'unknown'),
-                              SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      place['name'] ?? 'Unknown Name',
-                                      style: TextStyle(
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold),
-                                    ),
-                                    SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Icon(Icons.phone, size: 16),
-                                        SizedBox(width: 4),
-                                        Text(
-                                          phone, // ใช้ฟิลด์ phone ที่เราเพิ่มใน Firestore
-                                          style: TextStyle(fontSize: 16),
-                                        ),
-                                      ],
-                                    ),
-                                    SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Icon(Icons.location_on, size: 16),
-                                        SizedBox(width: 4),
-                                        Expanded(
-                                          child: Text(
-                                            address, // ใช้ตัวแปร address ที่ตรวจสอบแล้ว
+                        );
+                      } else {
+                        print('Invalid place data');
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // แสดงวันที่เพิ่มเข้ารายการโปรด
+                          Text(
+                            _formatDateTime(place[
+                                'added_at']), // ใช้ 'added_at' และแปลง Timestamp
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Divider(color: Colors.black54, thickness: 1),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // ใช้ไอคอนที่แสดงตามประเภท
+                                _getIconForType(place['type'] ?? 'unknown'),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        place['name'] ?? 'Unknown Name',
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                      SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Icon(Icons.phone, size: 16),
+                                          SizedBox(width: 4),
+                                          Text(
+                                            phone, // ใช้ฟิลด์ phone ที่เราเพิ่มใน Firestore
                                             style: TextStyle(fontSize: 16),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    SizedBox(height: 4),
-                                    Row(
-                                      children: [
-                                        Icon(Icons.access_time, size: 16),
-                                        SizedBox(width: 4),
-                                        Text(
-                                          place['opening_hours'] != null
-                                              ? (place['opening_hours']
-                                                      ['open_now']
-                                                  ? 'Open now'
-                                                  : 'Closed')
-                                              : 'N/A',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            color: place['opening_hours'] !=
-                                                        null &&
-                                                    place['opening_hours']
-                                                        ['open_now']
-                                                ? Colors.green
-                                                : Colors.red,
+                                        ],
+                                      ),
+                                      SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          Icon(Icons.location_on, size: 16),
+                                          SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              address, // ใช้ตัวแปร address ที่ตรวจสอบแล้ว
+                                              style: TextStyle(fontSize: 16),
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    ),
-                                    SizedBox(height: 4),
-                                    if (place['type'] != null)
+                                        ],
+                                      ),
+                                      SizedBox(height: 4),
                                       Row(
                                         children: [
                                           Icon(Icons.category, size: 16),
                                           SizedBox(width: 4),
-                                          // แสดงประเภทสถานที่ที่ถูกต้อง
                                           Text(
                                             placeType,
                                             style: TextStyle(fontSize: 16),
                                           ),
                                         ],
                                       ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   );
                 },

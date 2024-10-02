@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -15,6 +17,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<Map<String, dynamic>> favoritePlaces = [];
   List<Map<String, dynamic>> travelHistory = [];
+  Map<String, dynamic> place = {};
 
   @override
   void initState() {
@@ -26,7 +29,8 @@ class _HomePageState extends State<HomePage> {
   // ดึง userId จาก Firebase Authentication
   Future<String?> _getUserId() async {
     User? user = FirebaseAuth.instance.currentUser;
-    return user?.uid; // คืนค่า userId ของผู้ใช้ปัจจุบัน หรือ null ถ้าไม่มีผู้ใช้ล็อกอิน
+    return user
+        ?.uid; // คืนค่า userId ของผู้ใช้ปัจจุบัน หรือ null ถ้าไม่มีผู้ใช้ล็อกอิน
   }
 
   // ฟังก์ชันสำหรับโหลดรายการโปรดจาก Firestore
@@ -87,111 +91,201 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
- // ฟังก์ชันสำหรับเพิ่มรายการโปรดไปที่ Firestore
-void _addToFavorites(Map<String, dynamic> place) async {
-  String? userId = await _getUserId();
+  Future<void> _getPlaceData(String placeId) async {
+    // ดึงข้อมูลจาก Firestore ก่อน
+    DocumentSnapshot doc = await FirebaseFirestore.instance
+        .collection('places')
+        .doc(placeId)
+        .get();
 
-  if (userId != null) {
-    try {
-      // พิมพ์ค่าพิกัดเพื่อเช็คว่ามีค่าอะไร
-      print('Lat: ${place['lat']}, Lng: ${place['lng']}');
+    double lat;
+    double lng;
+    String name;
 
-      // ตรวจสอบว่า lat และ lng มีค่าเป็น null หรือไม่ หรือเป็น 0
-      if (place['lat'] != null && place['lng'] != null && place['lat'] != 0 && place['lng'] != 0) {
-        // ตรวจสอบว่ามี address หรือไม่ ถ้าไม่มีให้ตั้งค่าเป็น 'No address'
-        final address = place['address'] != null && place['address'].isNotEmpty
-            ? place['address']
-            : 'No address'; // กำหนดค่าเริ่มต้นให้เป็น 'No address' ถ้าไม่มี
+    if (doc.exists) {
+  // ตรวจสอบข้อมูลจาก Firestore
+  lat = doc['lat'] ?? 0.0;
+  lng = doc['lng'] ?? 0.0;
+  name = doc['name'] ?? 'Unknown Place';
 
-        // บันทึกข้อมูลลงใน Firestore
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('favorites')
-            .add({
-          'name': place['name'],
-          'address': address, // ใช้ address ที่ตรวจสอบแล้ว
-          'lat': place['lat'],
-          'lng': place['lng'],
-          'type': place['type'],
-          'added_at': Timestamp.now(),
-          'phone': place['phone'] ?? 'No phone available',
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added to favorites')),
-        );
-      } else {
-        // แจ้งเตือนหากพิกัดไม่ถูกต้อง
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Invalid lat/lng values')),
-        );
-      }
-    } catch (e) {
-      print('Error adding to favorites: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add to favorites')),
-      );
-    }
-  } else {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('User not logged in')),
-    );
-  }
+  // ส่งข้อมูลไปยัง SearchPlacePage
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => SearchPlacePage(
+        lat: lat,
+        lng: lng,
+        name: name,
+        onAddToFavorites: _addToFavorites,
+        onAddToHistory: _addToHistory,
+      ),
+    ),
+  );
 }
 
 
-void _addToHistory(Map<String, dynamic> place) async {
-  String? userId = await _getUserId();
+    if (doc.exists) {
+      // ตรวจสอบข้อมูลจาก Firestore
+      lat = doc['lat'] ?? 0.0;
+      lng = doc['lng'] ?? 0.0;
+      name = doc['name'] ?? 'Unknown Place';
+    } else {
+      // ถ้า Firestore ไม่มีข้อมูล ลองดึงจาก Google API
+      final url =
+          'https://maps.googleapis.com/maps/api/place/details/json?placeid=$placeId&key=AIzaSyB67ZhLCsWm7sC9pUluesjiCOT-Wwu67oU';
+      final response = await http.get(Uri.parse(url));
 
-  if (userId != null) {
-    try {
-      // พิมพ์ค่าพิกัดเพื่อเช็คว่ามีค่าอะไร
-      print('Lat: ${place['lat']}, Lng: ${place['lng']}');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-      // ตรวจสอบว่า lat และ lng มีค่าเป็น null หรือไม่ หรือเป็น 0
-      if (place['lat'] != null && place['lng'] != null && place['lat'] != 0 && place['lng'] != 0) {
-        // ตรวจสอบว่ามี address หรือไม่ ถ้าไม่มีให้ตั้งค่าเป็น 'No address'
-        final address = place['address'] != null && place['address'].isNotEmpty
-            ? place['address']
-            : 'No address'; // กำหนดค่าเริ่มต้นให้เป็น 'No address' ถ้าไม่มี
-
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(userId)
-            .collection('history')
-            .add({
-          'name': place['name'] ?? 'Unknown Name',
-          'address': address, 
-          'lat': place['lat'],  // บันทึกค่าละติจูดที่มีอยู่
-          'lng': place['lng'],  // บันทึกค่าลองจิจูดที่มีอยู่
-          'type': place['type'] ?? 'Unknown Type',
-          'visited_at': Timestamp.now(),
-          'phone': place['phone'] ?? 'No phone available',
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Added to history')),
-        );
+        lat = data['result']['geometry']['location']['lat'] ?? 0.0;
+        lng = data['result']['geometry']['location']['lng'] ?? 0.0;
+        name = data['result']['name'] ?? 'Unknown Place';
       } else {
-        // แจ้งเตือนผู้ใช้หากพิกัดไม่มีค่า
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to add to history: Invalid lat/lng')),
-        );
+        lat = 0.0;
+        lng = 0.0;
+        name = 'Unknown Place';
       }
-    } catch (e) {
-      print('Error adding to history: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add to history')),
-      );
     }
-  } else {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('User not logged in')),
+
+// เมื่อคุณไปที่หน้า FavoritePage
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => FavoritePage(
+          onAddToFavorites: _addToFavorites,
+          onAddToHistory: _addToHistory,
+        ),
+      ),
+    );
+
+// เมื่อคุณไปที่หน้า SearchPlacePage
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SearchPlacePage(
+          lat: place['lat'] ?? 0.0, // กำหนดค่าเริ่มต้นให้ lat
+          lng: place['lng'] ?? 0.0, // กำหนดค่าเริ่มต้นให้ lng
+          name: place['name'] ?? 'Unknown Place', // กำหนดค่าเริ่มต้นให้ name
+          onAddToFavorites: _addToFavorites,
+          onAddToHistory: _addToHistory,
+        ),
+      ),
     );
   }
-}
 
+  // ฟังก์ชันสำหรับเพิ่มรายการโปรดไปที่ Firestore
+  void _addToFavorites(Map<String, dynamic> place) async {
+    String? userId = await _getUserId();
+
+    if (userId != null) {
+      try {
+        // พิมพ์ค่าพิกัดเพื่อเช็คว่ามีค่าอะไร
+        print('Lat: ${place['lat']}, Lng: ${place['lng']}');
+
+        // ตรวจสอบว่า lat และ lng มีค่าเป็น null หรือไม่ หรือเป็น 0
+        if (place['lat'] != null &&
+            place['lng'] != null &&
+            place['lat'] != 0 &&
+            place['lng'] != 0) {
+          // ตรวจสอบว่ามี address หรือไม่ ถ้าไม่มีให้ตั้งค่าเป็น 'No address'
+          final address = place['address'] != null &&
+                  place['address'].isNotEmpty
+              ? place['address']
+              : 'No address'; // กำหนดค่าเริ่มต้นให้เป็น 'No address' ถ้าไม่มี
+
+          // บันทึกข้อมูลลงใน Firestore
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('favorites')
+              .add({
+            'name': place['name'],
+            'address': address, // ใช้ address ที่ตรวจสอบแล้ว
+            'lat': place['lat'],
+            'lng': place['lng'],
+            'type': place['type'],
+            'added_at': Timestamp.now(),
+            'phone': place['phone'] ?? 'No phone available',
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Added to favorites')),
+          );
+        } else {
+          // แจ้งเตือนหากพิกัดไม่ถูกต้อง
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Invalid lat/lng values')),
+          );
+        }
+      } catch (e) {
+        print('Error adding to favorites: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add to favorites')),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('User not logged in')),
+      );
+    }
+  }
+
+  void _addToHistory(Map<String, dynamic> place) async {
+    String? userId = await _getUserId();
+
+    if (userId != null) {
+      try {
+        // พิมพ์ค่าพิกัดเพื่อเช็คว่ามีค่าอะไร
+        print('Lat: ${place['lat']}, Lng: ${place['lng']}');
+
+        // ตรวจสอบว่า lat และ lng มีค่าเป็น null หรือไม่ หรือเป็น 0
+        if (place['lat'] != null &&
+            place['lng'] != null &&
+            place['lat'] != 0 &&
+            place['lng'] != 0) {
+          // ตรวจสอบว่ามี address หรือไม่ ถ้าไม่มีให้ตั้งค่าเป็น 'No address'
+          final address = place['address'] != null &&
+                  place['address'].isNotEmpty
+              ? place['address']
+              : 'No address'; // กำหนดค่าเริ่มต้นให้เป็น 'No address' ถ้าไม่มี
+
+          await FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('history')
+              .add({
+            'name': place['name'] ?? 'Unknown Name',
+            'address': address,
+            'lat': place['lat'], // บันทึกค่าละติจูดที่มีอยู่
+            'lng': place['lng'], // บันทึกค่าลองจิจูดที่มีอยู่
+            'type': place['type'] ?? 'Unknown Type',
+            'visited_at': Timestamp.now(),
+            'phone': place['phone'] ?? 'No phone available',
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Added to history')),
+          );
+        } else {
+          // แจ้งเตือนผู้ใช้หากพิกัดไม่มีค่า
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text('Failed to add to history: Invalid lat/lng')),
+          );
+        }
+      } catch (e) {
+        print('Error adding to history: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to add to history')),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('User not logged in')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -284,8 +378,16 @@ void _addToHistory(Map<String, dynamic> place) async {
                               context,
                               MaterialPageRoute(
                                 builder: (context) => SearchPlacePage(
-                                  onAddToFavorites: _addToFavorites,
-                                  onAddToHistory: _addToHistory,
+                                  onAddToFavorites:
+                                      _addToFavorites, // callback สำหรับเพิ่มใน Favorites
+                                  onAddToHistory:
+                                      _addToHistory, // callback สำหรับเพิ่มใน History
+                                  lat: place['lat'] ??
+                                      0.0, // กำหนดค่าเริ่มต้นให้ lat เป็น 0.0 ถ้าเป็น null
+                                  lng: place['lng'] ??
+                                      0.0, // กำหนดค่าเริ่มต้นให้ lng เป็น 0.0 ถ้าเป็น null
+                                  name: place['name'] ??
+                                      'Unknown Place', // กำหนดค่าเริ่มต้นให้ name เป็น 'Unknown Place' ถ้าเป็น null
                                 ),
                               ),
                             );
@@ -302,6 +404,8 @@ void _addToHistory(Map<String, dynamic> place) async {
                               context,
                               MaterialPageRoute(
                                 builder: (context) => FavoritePage(
+                                  onAddToFavorites: _addToFavorites,
+                                  onAddToHistory: _addToHistory,
                                 ),
                               ),
                             );
@@ -317,8 +421,7 @@ void _addToHistory(Map<String, dynamic> place) async {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => HistoryPage(
-                                ),
+                                builder: (context) => HistoryPage(),
                               ),
                             );
                           },
@@ -333,7 +436,7 @@ void _addToHistory(Map<String, dynamic> place) async {
         ],
       ),
 
-       // Bottom Navigation
+      // Bottom Navigation
       bottomNavigationBar: BottomAppBar(
         color: Color.fromARGB(255, 250, 184, 1),
         shape: CircularNotchedRectangle(),
@@ -370,7 +473,6 @@ void _addToHistory(Map<String, dynamic> place) async {
     );
   }
 
-
   Widget _buildActionCard({
     required IconData icon,
     required String label,
@@ -386,8 +488,8 @@ void _addToHistory(Map<String, dynamic> place) async {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding:
-              const EdgeInsets.symmetric(vertical: 25, horizontal: 20), // เพิ่ม Padding ให้ font ไม่ชนขอบ
+          padding: const EdgeInsets.symmetric(
+              vertical: 25, horizontal: 20), // เพิ่ม Padding ให้ font ไม่ชนขอบ
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

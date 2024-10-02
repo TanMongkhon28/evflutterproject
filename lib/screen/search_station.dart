@@ -18,11 +18,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 class SearchPlacePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
   final Function(Map<String, dynamic>) onAddToHistory;
+  final double lat;
+  final double lng;
+  final String name;
   final CollectionReference evStationsCollection =
       FirebaseFirestore.instance.collection('ev_stations');
 
   SearchPlacePage(
-      {required this.onAddToFavorites, required this.onAddToHistory});
+      {required this.onAddToFavorites, required this.onAddToHistory,required this.lat, required this.lng, required this.name});
 
   @override
   _SearchPlacePageState createState() => _SearchPlacePageState();
@@ -45,7 +48,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   Timer? _debounce;
   String? _distanceText;
   String? _durationText;
-  List<String> _searchHistory = [];
+  List<Map<String, dynamic>> _searchHistory = [];
   List<Map<String, dynamic>> _originalPlaces = [];
   String? _selectedFilter = 'all';
   String? _tempSelectedFilter;
@@ -75,30 +78,42 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     _loadSearchHistory();
   }
 
-  // โหลดประวัติการค้นหาจาก SharedPreferences
   Future<void> _loadSearchHistory() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      _searchHistory = prefs.getStringList('search_history') ?? [];
-    });
-  }
-
-  // บันทึกประวัติการค้นหาใน SharedPreferences
-  Future<void> _saveSearchHistory(String query) async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    setState(() {
-      if (!_searchHistory.contains(query)) {
-        _searchHistory.add(query);
+      List<String>? encodedHistory = prefs.getStringList('search_history');
+      if (encodedHistory != null) {
+        _searchHistory = encodedHistory
+            .map((item) => jsonDecode(item))
+            .cast<Map<String, dynamic>>()
+            .toList();
+      } else {
+        _searchHistory = [];
       }
     });
-    await prefs.setStringList('search_history', _searchHistory);
   }
 
-  void _clearSearchHistory(String historyItem) async {
+  Future<void> _saveSearchHistory(Map<String, dynamic> suggestion) async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     setState(() {
-      _searchHistory.removeWhere((item) => item == historyItem);
-      prefs.setStringList('search_history', _searchHistory);
+      if (!_searchHistory
+          .any((item) => item['place_id'] == suggestion['place_id'])) {
+        _searchHistory.add(suggestion);
+      }
+    });
+    List<String> encodedHistory =
+        _searchHistory.map((item) => jsonEncode(item)).toList();
+    await prefs.setStringList('search_history', encodedHistory);
+  }
+
+  void _clearSearchHistory(Map<String, dynamic> historyItem) async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _searchHistory
+          .removeWhere((item) => item['place_id'] == historyItem['place_id']);
+      List<String> encodedHistory =
+          _searchHistory.map((item) => jsonEncode(item)).toList();
+      prefs.setStringList('search_history', encodedHistory);
     });
   }
 
@@ -292,59 +307,85 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
-    try {
-      String placeId = suggestion['place_id'];
-      String description = suggestion['description'] ?? 'Unknown';
+Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
+  try {
+    String placeId = suggestion['place_id'];
+    String description = suggestion['description'] ?? suggestion['name'] ?? 'Unknown';
 
-      // Fetch details of the selected place from Google API or Firestore
-      Map<String, dynamic> placeDetails;
-      if (suggestion['source'] == 'google') {
+    // Fetch details of the selected place from Google API or Firestore
+    Map<String, dynamic> placeDetails;
+    if (suggestion['source'] == 'google') {
+      // ตรวจสอบประเภทของสถานที่เพื่อเรียกฟังก์ชัน fetch ที่เหมาะสม
+      if (suggestion['type'] == 'electric_vehicle_charging_station') {
+        placeDetails = await _fetchEVChargingStationDetails(placeId);
+      } else {
         placeDetails = await fetchPlaceDetails(placeId);
-      } else if (suggestion['source'] == 'firestore') {
-        // หากเป็นจาก Firestore ให้ใช้ข้อมูลที่มีอยู่
-        placeDetails = {
-          'name': suggestion['description'],
-          'address': suggestion['address'],
-          'lat': suggestion['lat'],
-          'lng': suggestion['lng'],
-          'type': suggestion['type'] ?? 'unknown',
-        };
-      } else {
-        placeDetails = {};
       }
+    } else if (suggestion['source'] == 'firestore') {
+      // ใช้ข้อมูลที่มีอยู่จาก Firestore
+      placeDetails = {
+        'name': suggestion['name'],
+        'address': suggestion['address'],
+        'image_url': suggestion['image_url'] ?? '',
+        'lat': suggestion['lat'],
+        'lng': suggestion['lng'],
+        'type': suggestion['type'] ?? 'unknown',
+        'place_id': suggestion['place_id'],
+        'phone': suggestion['phone'] ?? 'No phone available',
+        'opening_hours': suggestion['opening_hours'] ?? suggestion['open_hours'] ?? 'No hours available',
+        'source': 'firestore',
+      };
 
-      // ตรวจสอบว่ามีข้อมูล lat และ lng
-      if (placeDetails.isNotEmpty &&
-          placeDetails.containsKey('lat') &&
-          placeDetails.containsKey('lng')) {
-        double lat = placeDetails['lat'];
-        double lng = placeDetails['lng'];
+      // ถ้าเป็นสถานี EV ให้รวมฟิลด์ที่เกี่ยวข้องกับ EV
+      if (suggestion['type'] == 'ev_station') {
+        placeDetails.addAll({
+          'charging_type': suggestion['charging_type'] ?? '',
+          'kw': suggestion['kw'] ?? 0.0,
+        });
+      }
+    } else {
+      placeDetails = {};
+    }
 
-        // Move the camera to the selected place
-        await _moveCameraToPlace(lat, lng);
-        print("Moved camera to place: $lat, $lng");
+    // ตรวจสอบว่ามีข้อมูล lat และ lng
+    if (placeDetails.isNotEmpty &&
+        placeDetails.containsKey('lat') &&
+        placeDetails.containsKey('lng')) {
+      double lat = placeDetails['lat'];
+      double lng = placeDetails['lng'];
 
-        // Show place details immediately after moving the camera
-        final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+      // ย้ายกล้องไปยังสถานที่ที่เลือก
+      await _moveCameraToPlace(lat, lng);
+      print("Moved camera to place: $lat, $lng");
+
+      // แสดงรายละเอียดของสถานที่ทันทีหลังจากย้ายกล้อง
+      final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+
+      // ตรวจสอบประเภทของสถานที่และเรียกใช้ฟังก์ชันที่เหมาะสม
+      if (placeDetails['type'] == 'ev_station' ||
+          placeDetails['type'] == 'electric_vehicle_charging_station') {
+        _showEVStationDetails(placeDetails, placeLatLng);
+      } else {
         _showPlaceDetails(placeId, placeLatLng, placeDetails);
-
-        // Save the search to history
-        await _saveSearchHistory(description);
-        print("Saved search history for: $description");
-      } else {
-        print("Place details not found or invalid.");
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Place details not found or invalid.')),
-        );
       }
-    } catch (e) {
-      print("Error selecting suggestion: $e");
+
+      // บันทึกประวัติการค้นหา
+      await _saveSearchHistory(suggestion);
+      print("Saved search history for: $description");
+    } else {
+      print("Place details not found or invalid.");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error selecting suggestion: $e')),
+        SnackBar(content: Text('Place details not found or invalid.')),
       );
     }
+  } catch (e) {
+    print("Error selecting suggestion: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error selecting suggestion: $e')),
+    );
   }
+}
+
 
   void _handleSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce?.cancel();
@@ -358,15 +399,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         });
       }
     });
-  }
-
-// ค้นหาข้อมูลใน Firestore ตาม query ที่ระบุ
-  List<Map<String, dynamic>> _searchInFirestore(String query) {
-    return _originalPlaces.where((place) {
-      final matchQuery =
-          place['name'].toString().toLowerCase().contains(query.toLowerCase());
-      return matchQuery;
-    }).toList();
   }
 
   Map<String, List<Map<String, dynamic>>> _searchCache = {};
@@ -389,24 +421,34 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
       await _loadPlacesFromFirestore();
       print("Loaded places from Firestore");
 
-      // แปลงข้อมูลจาก Firestore ให้มีฟิลด์ที่สอดคล้องกับ Google Places API
-      List<Map<String, dynamic>> firestoreSuggestions = _places.where((place) {
+// สร้าง Map เพื่อเก็บ Suggestions โดยใช้ place_id เป็นคีย์
+      Map<String, Map<String, dynamic>> firestoreSuggestionsMap = {};
+
+// กรองสถานที่และเพิ่มลงใน Map
+      _places.where((place) {
         final name = place['name']?.toString().toLowerCase() ?? '';
         return name.contains(query.toLowerCase());
-      }).map((place) {
-        return {
+      }).forEach((place) {
+        final placeId = place['place_id'] ?? '';
+        firestoreSuggestionsMap[placeId] = {
           'name': place['name'] ?? 'No name available',
-          'place_id': place['place_id'] ?? '', // ใช้ place_id จาก Firestore
+          'place_id': placeId, // ใช้ place_id จาก Firestore
           'source': 'firestore', // ระบุแหล่งที่มา
           'lat': place['lat'],
           'lng': place['lng'],
           'type': place['type'] ?? 'unknown',
           'address': place['address'] ?? 'No address available',
+          'image_url': place['image_url'] ?? '',
+          'description': place['name'] ?? 'No name available',
         };
-      }).toList();
+      });
+
+// แปลง Map กลับมาเป็น List
+      List<Map<String, dynamic>> firestoreSuggestions =
+          firestoreSuggestionsMap.values.toList();
 
       print(
-          "Fetched ${firestoreSuggestions.length} suggestions from Firestore");
+          "Fetched ${firestoreSuggestions.length} unique suggestions from Firestore");
 
       // ดึงข้อมูลจาก Google Places API
       final googleApiUrl =
@@ -779,6 +821,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           'lng': result['geometry']['location']['lng'],
           'type': result['types'] != null ? result['types'].first : 'unknown',
           'photo_references': photoReferences,
+          'place_id': result['place_id'] ?? '',
+          'source': 'google',
         };
       } else {
         print('Failed to fetch place details: ${response.statusCode}');
@@ -2206,10 +2250,20 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     List<Map<String, dynamic>> suggestionsWithDistance = [];
 
     for (var suggestion in suggestions) {
-      final placeId = suggestion['place_id'];
-      final placeDetails = await fetchPlaceDetails(placeId);
-      final lat = placeDetails['lat'];
-      final lng = placeDetails['lng'];
+      double? lat;
+      double? lng;
+
+      if (suggestion['source'] == 'firestore') {
+        // ใช้ lat/lng โดยตรงจากข้อมูล Firestore
+        lat = suggestion['lat'];
+        lng = suggestion['lng'];
+      } else {
+        // ดึง lat/lng จาก Google API โดยใช้ place_id
+        final placeId = suggestion['place_id'];
+        final placeDetails = await fetchPlaceDetails(placeId);
+        lat = placeDetails['lat'];
+        lng = placeDetails['lng'];
+      }
 
       if (lat != null && lng != null) {
         // คำนวณระยะทาง
@@ -2221,13 +2275,14 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           distance =
               double.infinity; // กำหนดค่าระยะทางสูงสุดหากไม่สามารถคำนวณได้
         }
+
+        // เพิ่มข้อมูลลงใน suggestionsWithDistance
         suggestionsWithDistance.add({
           ...suggestion,
           'lat': lat,
           'lng': lng,
           'distance': distanceStr,
-          'distanceValue':
-              distance, // เก็บค่าระยะทางในรูปแบบตัวเลขเพื่อใช้ในการเรียง
+          'distanceValue': distance, // ใช้ระยะทางตัวเลขในการจัดเรียง
         });
       }
     }
@@ -2309,13 +2364,15 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                                 sortedSuggestions.length,
                             itemBuilder: (context, index) {
                               if (index < _searchHistory.length) {
-                                String historyItem = _searchHistory[index];
+                                Map<String, dynamic> historyItem =
+                                    _searchHistory[index];
                                 return Column(
                                   children: [
                                     ListTile(
-                                      title: Text(historyItem),
+                                      title: Text(
+                                          historyItem['name'] ?? 'Unknown'),
                                       onTap: () {
-                                        _searchAllPlaces(historyItem);
+                                        Navigator.pop(context, historyItem);
                                       },
                                       trailing: IconButton(
                                         icon: Icon(Icons.delete),
@@ -2331,8 +2388,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                                 var suggestion = sortedSuggestions[
                                     index - _searchHistory.length];
                                 return ListTile(
-                                  title: Text(
-                                      suggestion['description'] ?? 'Unknown'),
+                                  title: Text(suggestion['name'] ?? 'Unknown'),
                                   subtitle: Text(
                                       'Distance: ${suggestion['distance'] ?? 'Calculating...'}'),
                                   onTap: () {
