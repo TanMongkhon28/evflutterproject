@@ -18,14 +18,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 class SearchPlacePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
   final Function(Map<String, dynamic>) onAddToHistory;
-  final double lat;
-  final double lng;
+  final double? lat;
+  final double? lng;
   final String name;
   final CollectionReference evStationsCollection =
       FirebaseFirestore.instance.collection('ev_stations');
 
   SearchPlacePage(
-      {required this.onAddToFavorites, required this.onAddToHistory,required this.lat, required this.lng, required this.name});
+      {required this.onAddToFavorites,
+      required this.onAddToHistory,
+      required this.lat,
+      required this.lng,
+      required this.name});
 
   @override
   _SearchPlacePageState createState() => _SearchPlacePageState();
@@ -153,6 +157,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     print("Moving camera to position: $lat, $lng");
     controller
         .animateCamera(CameraUpdate.newLatLngZoom(position, 18.0)); // ซูมเข้า
+    final markerId = gms.MarkerId('place_$lat\_$lng');
+    controller.showMarkerInfoWindow(markerId);
   }
 
 // // ดึง userId จาก Firebase Authentication
@@ -268,15 +274,27 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   Timer? _debounceTimer;
 
-  void _startTrackingUserPosition() {
-    Geolocator.getPositionStream().listen((Position position) {
+StreamSubscription<Position>? _positionStreamSubscription;
+
+void _startTrackingUserPosition() {
+  _positionStreamSubscription = Geolocator.getPositionStream().listen((Position position) {
+    if (mounted) {
       setState(() {
         _currentPosition = gms.LatLng(position.latitude, position.longitude);
         _debounceUpdateDistance(); // อัปเดตระยะทางแบบ real-time
         _updatePolyline(); // อัปเดต Polyline บนแผนที่
       });
-    });
-  }
+    }
+  });
+}
+
+@override
+void dispose() {
+  // ยกเลิกการ subscription เมื่อ widget ถูก dispose
+  _positionStreamSubscription?.cancel();
+  super.dispose();
+}
+
 
   void _updatePolyline() async {
     if (_currentPosition != null && _destination != null) {
@@ -307,85 +325,87 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
-  try {
-    String placeId = suggestion['place_id'];
-    String description = suggestion['description'] ?? suggestion['name'] ?? 'Unknown';
+  Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
+    try {
+      String placeId = suggestion['place_id'];
+      String description =
+          suggestion['description'] ?? suggestion['name'] ?? 'Unknown';
 
-    // Fetch details of the selected place from Google API or Firestore
-    Map<String, dynamic> placeDetails;
-    if (suggestion['source'] == 'google') {
-      // ตรวจสอบประเภทของสถานที่เพื่อเรียกฟังก์ชัน fetch ที่เหมาะสม
-      if (suggestion['type'] == 'electric_vehicle_charging_station') {
-        placeDetails = await _fetchEVChargingStationDetails(placeId);
+      // Fetch details of the selected place from Google API or Firestore
+      Map<String, dynamic> placeDetails;
+      if (suggestion['source'] == 'google') {
+        // ตรวจสอบประเภทของสถานที่เพื่อเรียกฟังก์ชัน fetch ที่เหมาะสม
+        if (suggestion['type'] == 'electric_vehicle_charging_station') {
+          placeDetails = await _fetchEVChargingStationDetails(placeId);
+        } else {
+          placeDetails = await fetchPlaceDetails(placeId);
+        }
+      } else if (suggestion['source'] == 'firestore') {
+        // ใช้ข้อมูลที่มีอยู่จาก Firestore
+        placeDetails = {
+          'name': suggestion['name'],
+          'address': suggestion['address'],
+          'image_url': suggestion['image_url'] ?? '',
+          'lat': suggestion['lat'],
+          'lng': suggestion['lng'],
+          'type': suggestion['type'] ?? 'unknown',
+          'place_id': suggestion['place_id'],
+          'phone': suggestion['phone'] ?? 'No phone available',
+          'opening_hours': suggestion['opening_hours'] ??
+              suggestion['open_hours'] ??
+              'No hours available',
+          'source': 'firestore',
+        };
+
+        // ถ้าเป็นสถานี EV ให้รวมฟิลด์ที่เกี่ยวข้องกับ EV
+        if (suggestion['type'] == 'ev_station') {
+          placeDetails.addAll({
+            'charging_type': suggestion['charging_type'] ?? '',
+            'kw': suggestion['kw'] ?? 0.0,
+          });
+        }
       } else {
-        placeDetails = await fetchPlaceDetails(placeId);
+        placeDetails = {};
       }
-    } else if (suggestion['source'] == 'firestore') {
-      // ใช้ข้อมูลที่มีอยู่จาก Firestore
-      placeDetails = {
-        'name': suggestion['name'],
-        'address': suggestion['address'],
-        'image_url': suggestion['image_url'] ?? '',
-        'lat': suggestion['lat'],
-        'lng': suggestion['lng'],
-        'type': suggestion['type'] ?? 'unknown',
-        'place_id': suggestion['place_id'],
-        'phone': suggestion['phone'] ?? 'No phone available',
-        'opening_hours': suggestion['opening_hours'] ?? suggestion['open_hours'] ?? 'No hours available',
-        'source': 'firestore',
-      };
 
-      // ถ้าเป็นสถานี EV ให้รวมฟิลด์ที่เกี่ยวข้องกับ EV
-      if (suggestion['type'] == 'ev_station') {
-        placeDetails.addAll({
-          'charging_type': suggestion['charging_type'] ?? '',
-          'kw': suggestion['kw'] ?? 0.0,
-        });
-      }
-    } else {
-      placeDetails = {};
-    }
+      // ตรวจสอบว่ามีข้อมูล lat และ lng
+      if (placeDetails.isNotEmpty &&
+          placeDetails.containsKey('lat') &&
+          placeDetails.containsKey('lng')) {
+        double lat = placeDetails['lat'];
+        double lng = placeDetails['lng'];
 
-    // ตรวจสอบว่ามีข้อมูล lat และ lng
-    if (placeDetails.isNotEmpty &&
-        placeDetails.containsKey('lat') &&
-        placeDetails.containsKey('lng')) {
-      double lat = placeDetails['lat'];
-      double lng = placeDetails['lng'];
+        // ย้ายกล้องไปยังสถานที่ที่เลือก
+        await _moveCameraToPlace(lat, lng);
+        print("Moved camera to place: $lat, $lng");
 
-      // ย้ายกล้องไปยังสถานที่ที่เลือก
-      await _moveCameraToPlace(lat, lng);
-      print("Moved camera to place: $lat, $lng");
+        // แสดงรายละเอียดของสถานที่ทันทีหลังจากย้ายกล้อง
+        final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
 
-      // แสดงรายละเอียดของสถานที่ทันทีหลังจากย้ายกล้อง
-      final gms.LatLng placeLatLng = gms.LatLng(lat, lng);
+        // ตรวจสอบประเภทของสถานที่และเรียกใช้ฟังก์ชันที่เหมาะสม
+        if (placeDetails['type'] == 'ev_station' ||
+            placeDetails['type'] == 'electric_vehicle_charging_station') {
+          _showEVStationDetails(placeDetails, placeLatLng);
+        } else {
+          _showPlaceDetails(placeId, placeLatLng, placeDetails);
+        }
 
-      // ตรวจสอบประเภทของสถานที่และเรียกใช้ฟังก์ชันที่เหมาะสม
-      if (placeDetails['type'] == 'ev_station' ||
-          placeDetails['type'] == 'electric_vehicle_charging_station') {
-        _showEVStationDetails(placeDetails, placeLatLng);
+        // บันทึกประวัติการค้นหา
+        await _saveSearchHistory(suggestion);
+        print("Saved search history for: $description");
       } else {
-        _showPlaceDetails(placeId, placeLatLng, placeDetails);
+        print("Place details not found or invalid.");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Place details not found or invalid.')),
+        );
       }
-
-      // บันทึกประวัติการค้นหา
-      await _saveSearchHistory(suggestion);
-      print("Saved search history for: $description");
-    } else {
-      print("Place details not found or invalid.");
+    } catch (e) {
+      print("Error selecting suggestion: $e");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Place details not found or invalid.')),
+        SnackBar(content: Text('Error selecting suggestion: $e')),
       );
     }
-  } catch (e) {
-    print("Error selecting suggestion: $e");
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error selecting suggestion: $e')),
-    );
   }
-}
-
 
   void _handleSearchChanged(String query) {
     if (_debounce?.isActive ?? false) _debounce?.cancel();
@@ -699,28 +719,50 @@ Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
     }
   }
 
-  Future<void> _getCurrentLocation() async {
-    try {
-      Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+Future<void> _getCurrentLocation() async {
+  try {
+    Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high);
+    if (mounted) {
       setState(() {
         _currentPosition = gms.LatLng(position.latitude, position.longitude);
-        print(
-            'Current position: $_currentPosition'); // พิมพ์ตำแหน่งปัจจุบันเพื่อเช็ค
+        print('Current position: $_currentPosition');
         _isLoadingLocation = false;
       });
-      if (_currentPosition != null) {
-        final controller = await _controllerCompleter.future;
+    }
+
+    if (_currentPosition != null) {
+      final controller = await _controllerCompleter.future;
+
+      // ถ้า lat และ lng ไม่ถูกส่งมาจาก FavoritePage ให้เลื่อนไปยังตำแหน่งปัจจุบัน
+      if (widget.lat == null || widget.lng == null || 
+          (widget.lat == 0.0 && widget.lng == 0.0)) {
+        // หากไม่ได้รับพิกัด หรือได้รับค่าเริ่มต้น (0.0, 0.0) ให้เลื่อนไปยังตำแหน่งปัจจุบัน
+        print("Moving camera to current user location: $_currentPosition");
         controller.animateCamera(
           CameraUpdate.newLatLngZoom(_currentPosition!, 14.0),
         );
+
+      } else {
+        // ถ้าได้รับค่าจาก FavoritePage ให้เลื่อนไปยังตำแหน่งนั้น
+        controller.animateCamera(
+          CameraUpdate.newLatLngZoom(
+            gms.LatLng(widget.lat!, widget.lng!), 22.0),
+        );
       }
-      _fetchPlaces();
-      _loadPlacesFromFirestore();
-    } catch (e) {
-      print('Error getting current location: $e');
     }
+
+    _fetchPlaces();
+    _loadPlacesFromFirestore();
+  } catch (e) {
+    print('Error getting current location: $e');
   }
+}
+
+
+
+
+
 
   Future<Map<String, dynamic>> _fetchEVChargingStationDetails(
       String placeId) async {
@@ -2737,6 +2779,7 @@ Future<void> onSuggestionSelected(Map<String, dynamic> suggestion) async {
                       icon: icon ?? BitmapDescriptor.defaultMarker,
                     );
                   }).toSet(),
+                  
                   polylines: _polylines,
                   zoomControlsEnabled: false,
                   myLocationEnabled: true,

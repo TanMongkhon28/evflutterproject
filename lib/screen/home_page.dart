@@ -103,26 +103,25 @@ class _HomePageState extends State<HomePage> {
     String name;
 
     if (doc.exists) {
-  // ตรวจสอบข้อมูลจาก Firestore
-  lat = doc['lat'] ?? 0.0;
-  lng = doc['lng'] ?? 0.0;
-  name = doc['name'] ?? 'Unknown Place';
+      // ตรวจสอบข้อมูลจาก Firestore
+      lat = doc['lat'] ?? 0.0;
+      lng = doc['lng'] ?? 0.0;
+      name = doc['name'] ?? 'Unknown Place';
 
-  // ส่งข้อมูลไปยัง SearchPlacePage
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => SearchPlacePage(
-        lat: lat,
-        lng: lng,
-        name: name,
-        onAddToFavorites: _addToFavorites,
-        onAddToHistory: _addToHistory,
-      ),
-    ),
-  );
-}
-
+      // ส่งข้อมูลไปยัง SearchPlacePage
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SearchPlacePage(
+            lat: lat,
+            lng: lng,
+            name: name,
+            onAddToFavorites: _addToFavorites,
+            onAddToHistory: _addToHistory,
+          ),
+        ),
+      );
+    }
 
     if (doc.exists) {
       // ตรวจสอบข้อมูลจาก Firestore
@@ -421,7 +420,10 @@ class _HomePageState extends State<HomePage> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => HistoryPage(),
+                                builder: (context) => HistoryPage(
+                                  onAddToFavorites: _addToFavorites,
+                                  onAddToHistory: _addToHistory,
+                                ),
                               ),
                             );
                           },

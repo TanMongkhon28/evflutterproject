@@ -4,16 +4,26 @@ import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-class FavoritePage extends StatelessWidget {
+class FavoritePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
   final Function(Map<String, dynamic>) onAddToHistory;
-  final CollectionReference _favoritesCollection =
-      FirebaseFirestore.instance.collection('users');
+  final double? lat;
+  final double? lng;
 
   FavoritePage({
     required this.onAddToFavorites,
     required this.onAddToHistory,
+    this.lat,
+    this.lng,
   });
+
+  @override
+  _FavoritePageState createState() => _FavoritePageState();
+}
+
+class _FavoritePageState extends State<FavoritePage> {
+  final CollectionReference _favoritesCollection =
+      FirebaseFirestore.instance.collection('users');
 
   Future<String?> _getUserId() async {
     User? user = FirebaseAuth.instance.currentUser;
@@ -43,11 +53,30 @@ class FavoritePage extends StatelessWidget {
       case 'cafe':
         return Icon(Icons.local_cafe, size: 24);
       case 'tourist_attraction':
-        return Icon(Icons.camera_alt, size: 24);
+        return Icon(Icons.landscape, size: 24); // เปลี่ยนจาก camera_alt เป็น landscape
       case 'gas_station':
-        return Icon(Icons.camera_alt, size: 24);
+        return Icon(Icons.local_gas_station, size: 24); // เปลี่ยนจาก camera_alt เป็น local_gas_station
       default:
         return Icon(Icons.place, size: 24);
+    }
+  }
+
+  // ฟังก์ชันลบสถานที่จาก Favorites
+  Future<void> _removeFromFavorites(String userId, String favoriteId) async {
+    try {
+      await _favoritesCollection
+          .doc(userId)
+          .collection('favorites')
+          .doc(favoriteId)
+          .delete();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed from favorites')),
+      );
+    } catch (e) {
+      print('Error removing favorite: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove favorite')),
+      );
     }
   }
 
@@ -84,6 +113,7 @@ class FavoritePage extends StatelessWidget {
             stream: _favoritesCollection
                 .doc(userId)
                 .collection('favorites') // คอลเลกชันที่คุณต้องการดึงข้อมูล
+                .orderBy('added_at', descending: true) // เรียงลำดับตามวันที่เพิ่มล่าสุด
                 .snapshots(),
             builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -100,6 +130,7 @@ class FavoritePage extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final place =
                       favoritePlaces[index].data() as Map<String, dynamic>;
+                  final favoriteId = favoritePlaces[index].id;
 
                   // ตรวจสอบค่าพิกัดก่อนแสดงผล
                   final lat = place['lat'] ?? 0.0;
@@ -126,8 +157,8 @@ class FavoritePage extends StatelessWidget {
                   }
 
                   // ตรวจสอบหมายเลขโทรศัพท์
-                  final phone = place['phone'] ??
-                      'No phone available'; // ถ้าไม่มี phone ให้แสดงข้อความนี้แทน
+                  final phone =
+                      place['phone'] ?? 'No phone available'; // ถ้าไม่มี phone ให้แสดงข้อความนี้แทน
 
                   return InkWell(
                     onTap: () {
@@ -142,8 +173,8 @@ class FavoritePage extends StatelessWidget {
                               lat: place['lat'],
                               lng: place['lng'],
                               name: place['name'],
-                              onAddToFavorites: onAddToFavorites,
-                              onAddToHistory: onAddToHistory,
+                              onAddToFavorites: widget.onAddToFavorites,
+                              onAddToHistory: widget.onAddToHistory,
                             ),
                           ),
                         );
@@ -152,8 +183,8 @@ class FavoritePage extends StatelessWidget {
                       }
                     },
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 8),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -178,8 +209,7 @@ class FavoritePage extends StatelessWidget {
                                 SizedBox(width: 8),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         place['name'] ?? 'Unknown Name',
@@ -225,6 +255,41 @@ class FavoritePage extends StatelessWidget {
                                     ],
                                   ),
                                 ),
+                                // เพิ่มปุ่มลบที่นี่
+                                IconButton(
+                                  icon: Icon(Icons.delete, color: Colors.redAccent),
+                                  onPressed: () async {
+                                    // ยืนยันการลบก่อนลบ
+                                    bool? confirmDelete = await showDialog(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title: Text('Remove Favorite'),
+                                        content: Text(
+                                            'Are you sure you want to remove "${place['name']}" from your favorites?'),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(false),
+                                            child: Text('Cancel'),
+                                          ),
+                                          TextButton(
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(true),
+                                            child: Text(
+                                              'Remove',
+                                              style:
+                                                  TextStyle(color: Colors.red),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+
+                                    if (confirmDelete != null && confirmDelete) {
+                                      await _removeFromFavorites(userId, favoriteId);
+                                    }
+                                  },
+                                ),
                               ],
                             ),
                           ),
@@ -235,9 +300,10 @@ class FavoritePage extends StatelessWidget {
                 },
               );
             },
+            
           );
-        },
-      ),
+        }
+      )
     );
-  }
+      }
 }
