@@ -14,6 +14,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 
 class SearchPlacePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
@@ -21,15 +22,18 @@ class SearchPlacePage extends StatefulWidget {
   final double? lat;
   final double? lng;
   final String name;
+  final CollectionReference placesCollection =
+      FirebaseFirestore.instance.collection('places');
   final CollectionReference evStationsCollection =
       FirebaseFirestore.instance.collection('ev_stations');
 
-  SearchPlacePage(
-      {required this.onAddToFavorites,
-      required this.onAddToHistory,
-      required this.lat,
-      required this.lng,
-      required this.name});
+  SearchPlacePage({
+    required this.onAddToFavorites,
+    required this.onAddToHistory,
+    required this.lat,
+    required this.lng,
+    required this.name,
+  });
 
   @override
   _SearchPlacePageState createState() => _SearchPlacePageState();
@@ -58,6 +62,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   String? _tempSelectedFilter;
   String? selectedPlace;
   File? _selectedImage;
+  StreamSubscription<CompassEvent>? _compassSubscription;
+  double? _currentHeading;
   List<Map<String, dynamic>> _suggestions = [];
   gms.LatLng? _destination;
   final suggestions = ValueNotifier<List<Map<String, dynamic>>>([]);
@@ -80,6 +86,16 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     _loadPlacesFromFirestore();
 
     _loadSearchHistory();
+
+ _compassSubscription = FlutterCompass.events!.listen((CompassEvent event) async {
+    setState(() {
+      _currentHeading = event.heading;
+    });
+
+    if (_isNavigating && _currentPosition != null) {
+      await _updateCameraPosition();
+    }
+  });
   }
 
   Future<void> _loadSearchHistory() async {
@@ -274,27 +290,48 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   Timer? _debounceTimer;
 
-StreamSubscription<Position>? _positionStreamSubscription;
+  StreamSubscription<Position>? _positionStreamSubscription;
 
-void _startTrackingUserPosition() {
-  _positionStreamSubscription = Geolocator.getPositionStream().listen((Position position) {
-    if (mounted) {
-      setState(() {
-        _currentPosition = gms.LatLng(position.latitude, position.longitude);
-        _debounceUpdateDistance(); // อัปเดตระยะทางแบบ real-time
-        _updatePolyline(); // อัปเดต Polyline บนแผนที่
-      });
-    }
-  });
+  void _startTrackingUserPosition() {
+    _positionStreamSubscription =
+        Geolocator.getPositionStream().listen((Position position) async {
+      if (mounted) {
+        setState(() {
+          _currentPosition = gms.LatLng(position.latitude, position.longitude);
+          _debounceUpdateDistance(); // อัปเดตระยะทางแบบ real-time
+          _updatePolyline(); // อัปเดต Polyline บนแผนที่
+        });
+              if (_isNavigating) {
+        await _updateCameraPosition();
+              }
+      }
+    });
+  }
+
+  Future<void> _updateCameraPosition() async {
+  if (_currentPosition == null || _currentHeading == null) return;
+
+  final gms.GoogleMapController controller =
+      await _controllerCompleter.future;
+
+  final cameraPosition = gms.CameraPosition(
+    target: _currentPosition!,
+    zoom: 18.0, // ระดับการซูมที่เหมาะสม
+    bearing: _currentHeading!, // หมุนกล้องตามทิศทางของผู้ใช้
+    tilt: 60.0, // มุมเอียงของกล้อง (0-90)
+  );
+
+  controller.animateCamera(
+    gms.CameraUpdate.newCameraPosition(cameraPosition),
+  );
 }
 
-@override
-void dispose() {
-  // ยกเลิกการ subscription เมื่อ widget ถูก dispose
-  _positionStreamSubscription?.cancel();
-  super.dispose();
-}
-
+  @override
+  void dispose() {
+    _compassSubscription?.cancel();
+    _positionStreamSubscription?.cancel();
+    super.dispose();
+  }
 
   void _updatePolyline() async {
     if (_currentPosition != null && _destination != null) {
@@ -719,50 +756,45 @@ void dispose() {
     }
   }
 
-Future<void> _getCurrentLocation() async {
-  try {
-    Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high);
-    if (mounted) {
-      setState(() {
-        _currentPosition = gms.LatLng(position.latitude, position.longitude);
-        print('Current position: $_currentPosition');
-        _isLoadingLocation = false;
-      });
-    }
-
-    if (_currentPosition != null) {
-      final controller = await _controllerCompleter.future;
-
-      // ถ้า lat และ lng ไม่ถูกส่งมาจาก FavoritePage ให้เลื่อนไปยังตำแหน่งปัจจุบัน
-      if (widget.lat == null || widget.lng == null || 
-          (widget.lat == 0.0 && widget.lng == 0.0)) {
-        // หากไม่ได้รับพิกัด หรือได้รับค่าเริ่มต้น (0.0, 0.0) ให้เลื่อนไปยังตำแหน่งปัจจุบัน
-        print("Moving camera to current user location: $_currentPosition");
-        controller.animateCamera(
-          CameraUpdate.newLatLngZoom(_currentPosition!, 14.0),
-        );
-
-      } else {
-        // ถ้าได้รับค่าจาก FavoritePage ให้เลื่อนไปยังตำแหน่งนั้น
-        controller.animateCamera(
-          CameraUpdate.newLatLngZoom(
-            gms.LatLng(widget.lat!, widget.lng!), 22.0),
-        );
+  Future<void> _getCurrentLocation() async {
+    try {
+      Position position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      if (mounted) {
+        setState(() {
+          _currentPosition = gms.LatLng(position.latitude, position.longitude);
+          print('Current position: $_currentPosition');
+          _isLoadingLocation = false;
+        });
       }
+
+      if (_currentPosition != null) {
+        final controller = await _controllerCompleter.future;
+
+        // ถ้า lat และ lng ไม่ถูกส่งมาจาก FavoritePage ให้เลื่อนไปยังตำแหน่งปัจจุบัน
+        if (widget.lat == null ||
+            widget.lng == null ||
+            (widget.lat == 0.0 && widget.lng == 0.0)) {
+          // หากไม่ได้รับพิกัด หรือได้รับค่าเริ่มต้น (0.0, 0.0) ให้เลื่อนไปยังตำแหน่งปัจจุบัน
+          print("Moving camera to current user location: $_currentPosition");
+          controller.animateCamera(
+            CameraUpdate.newLatLngZoom(_currentPosition!, 14.0),
+          );
+        } else {
+          // ถ้าได้รับค่าจาก FavoritePage ให้เลื่อนไปยังตำแหน่งนั้น
+          controller.animateCamera(
+            CameraUpdate.newLatLngZoom(
+                gms.LatLng(widget.lat!, widget.lng!), 22.0),
+          );
+        }
+      }
+
+      _fetchPlaces();
+      _loadPlacesFromFirestore();
+    } catch (e) {
+      print('Error getting current location: $e');
     }
-
-    _fetchPlaces();
-    _loadPlacesFromFirestore();
-  } catch (e) {
-    print('Error getting current location: $e');
   }
-}
-
-
-
-
-
 
   Future<Map<String, dynamic>> _fetchEVChargingStationDetails(
       String placeId) async {
@@ -1677,6 +1709,8 @@ Future<void> _getCurrentLocation() async {
           _durationText = duration;
           _isNavigating = true;
         });
+
+         await _updateCameraPosition();
       } else {
         throw Exception('Failed to fetch directions');
       }
@@ -2336,14 +2370,29 @@ Future<void> _getCurrentLocation() async {
     return suggestionsWithDistance;
   }
 
-  void _clearRoute() {
-    setState(() {
-      _polylines.clear();
-      _isNavigating = false;
-      _distanceText = null;
-      _durationText = null;
-    });
+void _clearRoute() async {
+  setState(() {
+    _polylines.clear();
+    _isNavigating = false;
+    _distanceText = null;
+    _durationText = null;
+  });
+
+  // รีเซ็ตมุมกล้องกลับไปเป็นค่าเริ่มต้น
+  if (_currentPosition != null) {
+    final gms.GoogleMapController controller = await _controllerCompleter.future;
+    final cameraPosition = gms.CameraPosition(
+      target: _currentPosition!,
+      zoom: 14.0, // ระดับการซูมเริ่มต้น
+      bearing: 0.0, // รีเซ็ตการหมุนกลับไปที่ 0
+      tilt: 0.0, // รีเซ็ตมุมเอียงกลับไปที่ 0
+    );
+    controller.animateCamera(
+      gms.CameraUpdate.newCameraPosition(cameraPosition),
+    );
   }
+}
+
 
   void _showSearchScreen(BuildContext context) async {
     final selectedPlace = await Navigator.of(context).push(
@@ -2779,7 +2828,6 @@ Future<void> _getCurrentLocation() async {
                       icon: icon ?? BitmapDescriptor.defaultMarker,
                     );
                   }).toSet(),
-                  
                   polylines: _polylines,
                   zoomControlsEnabled: false,
                   myLocationEnabled: true,

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'search_station.dart'; // เพิ่มการนำเข้าหน้าสำหรับการนำทาง
+import 'search_station.dart'; 
 
 class HistoryPage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
