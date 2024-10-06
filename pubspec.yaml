@@ -31,6 +31,9 @@ dependencies:
   flutter:
     sdk: flutter
 
+dependency_overrides:
+  flutter_compass:
+    git: https://github.com/PikPakPik/flutter_compass.git
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -58,7 +61,7 @@ dependencies:
   carousel_slider: ^5.0.0
   cached_network_image: ^3.4.0
   uuid: ^4.5.0
-  flutter_compass: ^0.8.0
+  # flutter_compass: ^0.8.0
 
 dev_dependencies:
   flutter_test:
