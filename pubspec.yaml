@@ -61,6 +61,7 @@ dependency_overrides:
   carousel_slider: ^5.0.0
   cached_network_image: ^3.4.0
   uuid: ^4.5.0
+  connectivity_plus: ^6.0.5
   # flutter_compass: ^0.8.0
 
 dev_dependencies:

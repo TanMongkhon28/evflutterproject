@@ -15,6 +15,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class SearchPlacePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
@@ -73,6 +74,9 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
   Set<gms.Polyline> _polylines = {};
   gms.PolylineId polylineId = gms.PolylineId('route');
 
+  Map<String, List<Map<String, dynamic>>> _searchCache = {};
+  bool _placesLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,15 +91,16 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
     _loadSearchHistory();
 
- _compassSubscription = FlutterCompass.events!.listen((CompassEvent event) async {
-    setState(() {
-      _currentHeading = event.heading;
-    });
+    _compassSubscription =
+        FlutterCompass.events!.listen((CompassEvent event) async {
+      setState(() {
+        _currentHeading = event.heading;
+      });
 
-    if (_isNavigating && _currentPosition != null) {
-      await _updateCameraPosition();
-    }
-  });
+      if (_isNavigating && _currentPosition != null) {
+        await _updateCameraPosition();
+      }
+    });
   }
 
   Future<void> _loadSearchHistory() async {
@@ -292,39 +297,45 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   StreamSubscription<Position>? _positionStreamSubscription;
 
+  LocationSettings locationSettings = LocationSettings(
+    accuracy: LocationAccuracy.high,
+    distanceFilter: 10, // อัปเดตเมื่อเคลื่อนที่เกิน 10 เมตร
+  );
+
   void _startTrackingUserPosition() {
     _positionStreamSubscription =
         Geolocator.getPositionStream().listen((Position position) async {
       if (mounted) {
         setState(() {
           _currentPosition = gms.LatLng(position.latitude, position.longitude);
-          _debounceUpdateDistance(); // อัปเดตระยะทางแบบ real-time
-          _updatePolyline(); // อัปเดต Polyline บนแผนที่
+          print('User moved to position: $_currentPosition');
         });
-              if (_isNavigating) {
-        await _updateCameraPosition();
-              }
+        if (_isNavigating) {
+          await _updateCameraPosition();
+          _updateDistanceToDestination();
+          _updatePolyline();
+        }
       }
     });
   }
 
   Future<void> _updateCameraPosition() async {
-  if (_currentPosition == null || _currentHeading == null) return;
+    if (_currentPosition == null || _currentHeading == null) return;
 
-  final gms.GoogleMapController controller =
-      await _controllerCompleter.future;
+    final gms.GoogleMapController controller =
+        await _controllerCompleter.future;
 
-  final cameraPosition = gms.CameraPosition(
-    target: _currentPosition!,
-    zoom: 18.0, // ระดับการซูมที่เหมาะสม
-    bearing: _currentHeading!, // หมุนกล้องตามทิศทางของผู้ใช้
-    tilt: 60.0, // มุมเอียงของกล้อง (0-90)
-  );
+    final cameraPosition = gms.CameraPosition(
+      target: _currentPosition!,
+      zoom: 18.0, // ระดับการซูมที่เหมาะสม
+      bearing: _currentHeading!, // หมุนกล้องตามทิศทางของผู้ใช้
+      tilt: 60.0, // มุมเอียงของกล้อง (0-90)
+    );
 
-  controller.animateCamera(
-    gms.CameraUpdate.newCameraPosition(cameraPosition),
-  );
-}
+    controller.animateCamera(
+      gms.CameraUpdate.newCameraPosition(cameraPosition),
+    );
+  }
 
   @override
   void dispose() {
@@ -333,10 +344,26 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     super.dispose();
   }
 
+  gms.LatLng? _lastFetchedPosition;
+
   void _updatePolyline() async {
     if (_currentPosition != null && _destination != null) {
-      _fetchRouteAndNavigate(
-          _destination!); // อัปเดตเส้นทางใหม่เมื่อผู้ใช้เคลื่อนที่
+      if (_lastFetchedPosition == null) {
+        _lastFetchedPosition = _currentPosition;
+      }
+
+      double distance = Geolocator.distanceBetween(
+        _lastFetchedPosition!.latitude,
+        _lastFetchedPosition!.longitude,
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+      );
+
+      if (distance > 20) {
+        _lastFetchedPosition = _currentPosition;
+        print('Updating polyline...');
+        await _fetchRouteAndNavigate(_destination!);
+      }
     }
   }
 
@@ -354,11 +381,34 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   void _updateDistanceToDestination() async {
     if (_destination != null && _currentPosition != null) {
-      final distance =
-          await _getDistance(_destination!.latitude, _destination!.longitude);
-      setState(() {
-        _distanceText = distance;
-      });
+      final String origin =
+          '${_currentPosition!.latitude},${_currentPosition!.longitude}';
+      final String destination =
+          '${_destination!.latitude},${_destination!.longitude}';
+
+      final url =
+          'https://maps.googleapis.com/maps/api/directions/json?origin=$origin&destination=$destination&key=$_apiKey';
+
+      try {
+        final response = await http.get(Uri.parse(url));
+        if (response.statusCode == 200) {
+          final jsonResponse = json.decode(response.body);
+          final route = jsonResponse['routes'][0];
+          final leg = route['legs'][0];
+          final distance = leg['distance']['text'];
+          final duration = leg['duration']['text'];
+
+          setState(() {
+            _distanceText = distance;
+            _durationText = duration;
+            print('Updated distance: $_distanceText, duration: $_durationText');
+          });
+        } else {
+          throw Exception('Failed to fetch distance');
+        }
+      } catch (e) {
+        print('Error fetching distance: $e');
+      }
     }
   }
 
@@ -458,10 +508,11 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-  Map<String, List<Map<String, dynamic>>> _searchCache = {};
+
 
   Future<void> _fetchPlaceSuggestions(String query) async {
     print("Fetching place suggestions for query: $query");
+
     if (_searchCache.containsKey(query)) {
       suggestionsNotifier.value = _searchCache[query]!;
       print("Loaded suggestions from cache");
@@ -470,111 +521,149 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
     if (_currentPosition == null) {
       print("Current position is null");
+      // คุณอาจต้องการแจ้งให้ผู้ใช้เปิดการเข้าถึงตำแหน่ง
       return;
     }
 
-    try {
-      // โหลดข้อมูลจาก Firestore
-      await _loadPlacesFromFirestore();
-      print("Loaded places from Firestore");
+    // ใช้ Debounce เพื่อลดการเรียกใช้งานบ่อยครั้ง
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      // ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต
+      var connectivityResult = await (Connectivity().checkConnectivity());
+      if (connectivityResult == ConnectivityResult.none) {
+        // แจ้งเตือนผู้ใช้ว่าไม่มีการเชื่อมต่ออินเทอร์เน็ต
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตของคุณ')),
+        );
+        return;
+      }
 
-// สร้าง Map เพื่อเก็บ Suggestions โดยใช้ place_id เป็นคีย์
-      Map<String, Map<String, dynamic>> firestoreSuggestionsMap = {};
+      try {
+        // โหลดข้อมูลจาก Firestore ครั้งเดียว
+        if (!_placesLoaded) {
+          await _loadPlacesFromFirestore();
+          _placesLoaded = true;
+          print("Loaded places from Firestore");
+        }
 
-// กรองสถานที่และเพิ่มลงใน Map
-      _places.where((place) {
-        final name = place['name']?.toString().toLowerCase() ?? '';
-        return name.contains(query.toLowerCase());
-      }).forEach((place) {
-        final placeId = place['place_id'] ?? '';
-        firestoreSuggestionsMap[placeId] = {
-          'name': place['name'] ?? 'No name available',
-          'place_id': placeId, // ใช้ place_id จาก Firestore
-          'source': 'firestore', // ระบุแหล่งที่มา
-          'lat': place['lat'],
-          'lng': place['lng'],
-          'type': place['type'] ?? 'unknown',
-          'address': place['address'] ?? 'No address available',
-          'image_url': place['image_url'] ?? '',
-          'description': place['name'] ?? 'No name available',
-        };
-      });
+        // ค้นหาสถานที่จาก Firestore โดยตรง
+        final firestoreResults = await FirebaseFirestore.instance
+            .collection('places')
+            .where('name', isGreaterThanOrEqualTo: query)
+            .where('name', isLessThanOrEqualTo: query + '\uf8ff')
+            .get();
 
-// แปลง Map กลับมาเป็น List
-      List<Map<String, dynamic>> firestoreSuggestions =
-          firestoreSuggestionsMap.values.toList();
+        List<Map<String, dynamic>> firestoreSuggestions = firestoreResults.docs
+            .map((doc) {
+              final place = doc.data();
+              return {
+                'name': place['name'] ?? 'No name available',
+                'place_id': place['place_id'] ?? '',
+                'source': 'firestore',
+                'lat': place['lat'],
+                'lng': place['lng'],
+                'type': place['type'] ?? 'unknown',
+                'address': place['address'] ?? 'No address available',
+                'image_url': place['image_url'] ?? '',
+                'description': place['name'] ?? 'No name available',
+              };
+            })
+            .toList()
+            .cast<Map<String, dynamic>>();
 
-      print(
-          "Fetched ${firestoreSuggestions.length} unique suggestions from Firestore");
+        print("Fetched ${firestoreSuggestions.length} suggestions from Firestore");
 
-      // ดึงข้อมูลจาก Google Places API
-      final googleApiUrl =
-          'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query&key=$_apiKey&components=country:th';
-      final googleResponse = await http.get(Uri.parse(googleApiUrl));
-      List<Map<String, dynamic>> googleSuggestions = [];
+        // ดึงข้อมูลจาก Google Places API
+        final googleApiUrl = Uri.https(
+          'maps.googleapis.com',
+          '/maps/api/place/autocomplete/json',
+          {
+            'input': query,
+            'key': _apiKey,
+            'components': 'country:th',
+            'language': 'th',
+            'location': '${_currentPosition!.latitude},${_currentPosition!.longitude}',
+            'radius': '5000', // ระบุรัศมีในหน่วยเมตร (ปรับตามความเหมาะสม)
+          },
+        );
 
-      if (googleResponse.statusCode == 200) {
-        final jsonResponse = json.decode(googleResponse.body);
-        final predictions = jsonResponse['predictions'] as List;
+        final googleResponse = await http.get(googleApiUrl);
+        List<Map<String, dynamic>> googleSuggestions = [];
 
-        googleSuggestions = predictions.map((prediction) {
-          return {
-            'description': prediction['description'],
-            'place_id': prediction['place_id'],
-            'source': 'google',
-          };
+        if (googleResponse.statusCode == 200) {
+          final jsonResponse = json.decode(googleResponse.body);
+          final predictions = jsonResponse['predictions'] as List;
+
+          googleSuggestions = predictions.map((prediction) {
+            return {
+              'description': prediction['description'],
+              'place_id': prediction['place_id'],
+              'source': 'google',
+            };
+          }).toList();
+
+          print("Fetched ${predictions.length} suggestions from Google Places API");
+        } else {
+          print("Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
+        }
+
+        // รวมผลลัพธ์จาก Firestore และ Google Places API
+        List<Map<String, dynamic>> fetchedSuggestions = [
+          ...firestoreSuggestions,
+          ...googleSuggestions,
+        ];
+
+        // ประมวลผลคำแนะนำแบบขนานโดยใช้ Future.wait
+        List<Future<Map<String, dynamic>>> futures = fetchedSuggestions.map((suggestion) async {
+          if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
+            double distance = _calculateDistance(
+              _currentPosition!.latitude,
+              _currentPosition!.longitude,
+              suggestion['lat'],
+              suggestion['lng'],
+            );
+            suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
+            return suggestion;
+          } else if (suggestion['source'] == 'google') {
+            final placeDetails = await fetchPlaceDetails(suggestion['place_id']);
+            if (placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
+              double distance = _calculateDistance(
+                _currentPosition!.latitude,
+                _currentPosition!.longitude,
+                placeDetails['lat'],
+                placeDetails['lng'],
+              );
+              suggestion['lat'] = placeDetails['lat'];
+              suggestion['lng'] = placeDetails['lng'];
+              suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
+              // เพิ่มฟิลด์อื่น ๆ ที่จำเป็นจาก Google Places API
+              suggestion['address'] = placeDetails['address'] ?? 'No address available';
+              suggestion['type'] = placeDetails['type'] ?? 'unknown';
+              suggestion['name'] = placeDetails['name'] ?? 'No name available';
+              suggestion['description'] = placeDetails['name'] ?? 'No name available';
+            }
+            return suggestion;
+          } else {
+            return suggestion;
+          }
         }).toList();
 
-        print(
-            "Fetched ${predictions.length} suggestions from Google Places API");
-      } else {
-        print(
-            "Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
+        List<Map<String, dynamic>> processedSuggestions = await Future.wait(futures);
+
+        // แคชผลลัพธ์และอัปเดต notifier
+        print("Setting suggestions and caching them");
+        _searchCache[query] = processedSuggestions;
+        suggestionsNotifier.value = processedSuggestions;
+      } catch (e) {
+        print('Error fetching suggestions: $e');
+        suggestionsNotifier.value = [];
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('เกิดข้อผิดพลาดในการดึงข้อมูลสถานที่ กรุณาลองใหม่อีกครั้ง')),
+        );
       }
-
-      // รวมผลลัพธ์จาก Firestore และ Google Places API
-      List<Map<String, dynamic>> fetchedSuggestions = [
-        ...firestoreSuggestions,
-        ...googleSuggestions,
-      ];
-
-      // คำนวณระยะทางสำหรับแต่ละ Suggestion
-      List<Map<String, dynamic>> processedSuggestions = [];
-      for (var suggestion in fetchedSuggestions) {
-        if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
-          String distance =
-              await _getDistance(suggestion['lat'], suggestion['lng']);
-          suggestion['distance'] = distance;
-          processedSuggestions.add(suggestion);
-        } else if (suggestion['source'] == 'google') {
-          final placeDetails = await fetchPlaceDetails(suggestion['place_id']);
-          if (placeDetails.containsKey('lat') &&
-              placeDetails.containsKey('lng')) {
-            String distance =
-                await _getDistance(placeDetails['lat'], placeDetails['lng']);
-            suggestion['lat'] = placeDetails['lat'];
-            suggestion['lng'] = placeDetails['lng'];
-            suggestion['distance'] = distance;
-            // เพิ่มฟิลด์อื่น ๆ ที่จำเป็นจาก Google Places API
-            suggestion['address'] =
-                placeDetails['address'] ?? 'No address available';
-            suggestion['type'] = placeDetails['type'] ?? 'unknown';
-            processedSuggestions.add(suggestion);
-          }
-        }
-      }
-
-      print("Setting suggestions and caching them");
-      _searchCache[query] = processedSuggestions; // แคชผลลัพธ์
-      suggestionsNotifier.value = processedSuggestions;
-    } catch (e) {
-      print('Error fetching suggestions: $e');
-      suggestionsNotifier.value = [];
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error fetching suggestions: $e')),
-      );
-    }
+    });
   }
+
 
   void _showFilterDialog() {
     _tempSelectedFilter = _selectedFilter; // กำหนดค่าเริ่มต้นจากตัวแปรเดิม
@@ -1683,7 +1772,9 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     }
   }
 
-  void _fetchRouteAndNavigate(gms.LatLng destination) async {
+  Future<void> _fetchRouteAndNavigate(gms.LatLng destination) async {
+    _destination = destination;
+    print('Destination set to: $_destination');
     if (_currentPosition == null) return;
 
     final url =
@@ -1710,7 +1801,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           _isNavigating = true;
         });
 
-         await _updateCameraPosition();
+        await _updateCameraPosition();
       } else {
         throw Exception('Failed to fetch directions');
       }
@@ -2370,29 +2461,29 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     return suggestionsWithDistance;
   }
 
-void _clearRoute() async {
-  setState(() {
-    _polylines.clear();
-    _isNavigating = false;
-    _distanceText = null;
-    _durationText = null;
-  });
+  void _clearRoute() async {
+    setState(() {
+      _polylines.clear();
+      _isNavigating = false;
+      _distanceText = null;
+      _durationText = null;
+      _lastFetchedPosition = null;
+    });
 
-  // รีเซ็ตมุมกล้องกลับไปเป็นค่าเริ่มต้น
-  if (_currentPosition != null) {
-    final gms.GoogleMapController controller = await _controllerCompleter.future;
-    final cameraPosition = gms.CameraPosition(
-      target: _currentPosition!,
-      zoom: 14.0, // ระดับการซูมเริ่มต้น
-      bearing: 0.0, // รีเซ็ตการหมุนกลับไปที่ 0
-      tilt: 0.0, // รีเซ็ตมุมเอียงกลับไปที่ 0
-    );
-    controller.animateCamera(
-      gms.CameraUpdate.newCameraPosition(cameraPosition),
-    );
+    if (_currentPosition != null) {
+      final gms.GoogleMapController controller =
+          await _controllerCompleter.future;
+      final cameraPosition = gms.CameraPosition(
+        target: _currentPosition!,
+        zoom: 14.0,
+        bearing: 0.0,
+        tilt: 0.0,
+      );
+      controller.animateCamera(
+        gms.CameraUpdate.newCameraPosition(cameraPosition),
+      );
+    }
   }
-}
-
 
   void _showSearchScreen(BuildContext context) async {
     final selectedPlace = await Navigator.of(context).push(
@@ -2918,7 +3009,7 @@ void _clearRoute() async {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'Navigating...',
+                                'Navigating',
                                 style: TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.w600,
@@ -2934,24 +3025,78 @@ void _clearRoute() async {
                           ),
                           SizedBox(height: 12),
                           if (_distanceText != null)
-                            Text(
-                              'Distance: $_distanceText',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.black54,
-                              ),
+                            Row(
+                              children: [
+                                Icon(Icons.directions_walk, color: Colors.blue),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Distance: $_distanceText',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            Row(
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(width: 8),
+                                Text('Calculating distance...'),
+                              ],
                             ),
                           if (_durationText != null)
-                            Text(
-                              'Duration: $_durationText',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.black54,
-                              ),
+                            Row(
+                              children: [
+                                Icon(Icons.timer, color: Colors.green),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Duration: $_durationText',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            )
+                          else
+                            Row(
+                              children: [
+                                CircularProgressIndicator(),
+                                SizedBox(width: 8),
+                                Text('Calculating duration...'),
+                              ],
                             ),
                           SizedBox(height: 16),
                           ElevatedButton(
-                            onPressed: _clearRoute,
+                            onPressed: () {
+                              showDialog(
+                                context: context,
+                                builder: (BuildContext context) {
+                                  return AlertDialog(
+                                    title: Text('Cancel Navigation'),
+                                    content: Text(
+                                        'Do you really want to cancel navigation?'),
+                                    actions: [
+                                      TextButton(
+                                        child: Text('No'),
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                        },
+                                      ),
+                                      TextButton(
+                                        child: Text('Yes'),
+                                        onPressed: () {
+                                          Navigator.of(context).pop();
+                                          _clearRoute();
+                                        },
+                                      ),
+                                    ],
+                                  );
+                                },
+                              );
+                            },
                             style: ElevatedButton.styleFrom(
                               foregroundColor: Colors.white,
                               backgroundColor: Colors.redAccent,
@@ -2967,6 +3112,36 @@ void _clearRoute() async {
                                 Icon(Icons.cancel, color: Colors.white),
                                 SizedBox(width: 8),
                                 Text('Cancel Navigation'),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: 16),
+                          ElevatedButton(
+                            onPressed: () async {
+                              if (_currentPosition != null) {
+                                final controller =
+                                    await _controllerCompleter.future;
+                                controller.animateCamera(
+                                  CameraUpdate.newLatLngZoom(
+                                      _currentPosition!, 18.0),
+                                );
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              backgroundColor: Colors.green,
+                              padding: EdgeInsets.symmetric(
+                                  vertical: 12, horizontal: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8.0),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.my_location, color: Colors.white),
+                                SizedBox(width: 8),
+                                Text('Re-center'),
                               ],
                             ),
                           ),
