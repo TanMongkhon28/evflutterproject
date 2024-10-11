@@ -254,7 +254,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     final a = 0.5 -
         c((lat2 - lat1) * p) / 2 +
         c(lat1 * p) * c(lat2 * p) * (1 - c((lng2 - lng1) * p)) / 2;
-    return 12742 * asin(sqrt(a)); // 12742 เป็นค่าเส้นรอบวงโลก (กิโลเมตร)
+    return 12742 * asin(sqrt(a));
   }
 
   Future<String> _getDistance(double destLat, double destLng) async {
@@ -273,8 +273,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         final jsonResponse = json.decode(response.body);
         final route = jsonResponse['routes'][0];
         final leg = route['legs'][0];
-        final distance =
-            leg['distance']['text']; // ระยะทางในรูปแบบข้อความ เช่น '5.2 km'
+        final distance = leg['distance']['text'];
         final duration =
             leg['duration']['text']; // เวลาที่ใช้เดินทาง เช่น '15 mins'
 
@@ -299,7 +298,7 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
 
   LocationSettings locationSettings = LocationSettings(
     accuracy: LocationAccuracy.high,
-    distanceFilter: 10, // อัปเดตเมื่อเคลื่อนที่เกิน 10 เมตร
+    distanceFilter: 10,
   );
 
   void _startTrackingUserPosition() {
@@ -508,8 +507,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-
-
   Future<void> _fetchPlaceSuggestions(String query) async {
     print("Fetching place suggestions for query: $query");
 
@@ -571,7 +568,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
             .toList()
             .cast<Map<String, dynamic>>();
 
-        print("Fetched ${firestoreSuggestions.length} suggestions from Firestore");
+        print(
+            "Fetched ${firestoreSuggestions.length} suggestions from Firestore");
 
         // ดึงข้อมูลจาก Google Places API
         final googleApiUrl = Uri.https(
@@ -582,7 +580,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
             'key': _apiKey,
             'components': 'country:th',
             'language': 'th',
-            'location': '${_currentPosition!.latitude},${_currentPosition!.longitude}',
+            'location':
+                '${_currentPosition!.latitude},${_currentPosition!.longitude}',
             'radius': '5000', // ระบุรัศมีในหน่วยเมตร (ปรับตามความเหมาะสม)
           },
         );
@@ -602,9 +601,11 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
             };
           }).toList();
 
-          print("Fetched ${predictions.length} suggestions from Google Places API");
+          print(
+              "Fetched ${predictions.length} suggestions from Google Places API");
         } else {
-          print("Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
+          print(
+              "Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
         }
 
         // รวมผลลัพธ์จาก Firestore และ Google Places API
@@ -614,7 +615,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         ];
 
         // ประมวลผลคำแนะนำแบบขนานโดยใช้ Future.wait
-        List<Future<Map<String, dynamic>>> futures = fetchedSuggestions.map((suggestion) async {
+        List<Future<Map<String, dynamic>>> futures =
+            fetchedSuggestions.map((suggestion) async {
           if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
             double distance = _calculateDistance(
               _currentPosition!.latitude,
@@ -625,8 +627,10 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
             suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
             return suggestion;
           } else if (suggestion['source'] == 'google') {
-            final placeDetails = await fetchPlaceDetails(suggestion['place_id']);
-            if (placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
+            final placeDetails =
+                await fetchPlaceDetails(suggestion['place_id']);
+            if (placeDetails.containsKey('lat') &&
+                placeDetails.containsKey('lng')) {
               double distance = _calculateDistance(
                 _currentPosition!.latitude,
                 _currentPosition!.longitude,
@@ -637,10 +641,12 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
               suggestion['lng'] = placeDetails['lng'];
               suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
               // เพิ่มฟิลด์อื่น ๆ ที่จำเป็นจาก Google Places API
-              suggestion['address'] = placeDetails['address'] ?? 'No address available';
+              suggestion['address'] =
+                  placeDetails['address'] ?? 'No address available';
               suggestion['type'] = placeDetails['type'] ?? 'unknown';
               suggestion['name'] = placeDetails['name'] ?? 'No name available';
-              suggestion['description'] = placeDetails['name'] ?? 'No name available';
+              suggestion['description'] =
+                  placeDetails['name'] ?? 'No name available';
             }
             return suggestion;
           } else {
@@ -648,7 +654,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           }
         }).toList();
 
-        List<Map<String, dynamic>> processedSuggestions = await Future.wait(futures);
+        List<Map<String, dynamic>> processedSuggestions =
+            await Future.wait(futures);
 
         // แคชผลลัพธ์และอัปเดต notifier
         print("Setting suggestions and caching them");
@@ -658,11 +665,97 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         print('Error fetching suggestions: $e');
         suggestionsNotifier.value = [];
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('เกิดข้อผิดพลาดในการดึงข้อมูลสถานที่ กรุณาลองใหม่อีกครั้ง')),
+          SnackBar(
+              content: Text(
+                  'เกิดข้อผิดพลาดในการดึงข้อมูลสถานที่ กรุณาลองใหม่อีกครั้ง')),
         );
       }
     });
   }
+
+void _showNearbyEVStations() {
+  if (_currentPosition == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Unable to determine current location')),
+    );
+    return;
+  }
+
+
+List<Map<String, dynamic>> nearbyEVStations = _places.where((place) {
+  return place['type'] == 'ev_station' ||
+      place['type'] == 'electric_vehicle_charging_station';
+}).toList();
+
+
+nearbyEVStations = {for (var place in nearbyEVStations) place['place_id']: place}.values.toList();
+
+
+  // คำนวณระยะทางและจัดเรียงจากใกล้ไปไกล
+  nearbyEVStations.sort((a, b) {
+    double distanceA = _calculateDistance(_currentPosition!.latitude,
+        _currentPosition!.longitude, a['lat'], a['lng']);
+    double distanceB = _calculateDistance(_currentPosition!.latitude,
+        _currentPosition!.longitude, b['lat'], b['lng']);
+    return distanceA.compareTo(distanceB);
+  });
+
+  if (nearbyEVStations.isEmpty) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text('No nearby EV stations found', style: TextStyle(fontSize: 16)),
+          ),
+        );
+      },
+    );
+    return;
+  }
+
+  // แสดง ModalBottomSheet
+  showModalBottomSheet(
+    context: context,
+    builder: (context) {
+      return ListView.builder(
+        itemCount: nearbyEVStations.length,
+        itemBuilder: (context, index) {
+          final place = nearbyEVStations[index];
+          final distance = _calculateDistance(
+              _currentPosition!.latitude,
+              _currentPosition!.longitude,
+              place['lat'],
+              place['lng']);
+          return ListTile(
+            leading: Icon(Icons.ev_station, color: Colors.green),
+            title: Text(place['name'] ?? 'No name available'),
+            subtitle: Text(
+                '${place['address'] ?? 'No address available'}\n${distance.toStringAsFixed(2)} km'),
+            isThreeLine: true,
+            onTap: () async {
+              // ปิด ModalBottomSheet
+              Navigator.pop(context);
+              // ย้ายกล้องไปยังตำแหน่งของสถานีและซูมเข้า
+              await _moveCameraToPlace(place['lat'], place['lng']);
+              // แสดงรายละเอียดของสถานี EV
+              _showEVStationDetails(place, gms.LatLng(place['lat'], place['lng']));
+            },
+          );
+        },
+      );
+    },
+  );
+}
+
+void _removeDuplicatePlaces() {
+  final uniquePlaces = {for (var place in _places) place['place_id']: place}.values.toList();
+  setState(() {
+    _places = uniquePlaces;
+  });
+}
+
 
 
   void _showFilterDialog() {
@@ -2965,6 +3058,21 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                     child: Icon(
                       Icons.my_location,
                       color: Colors.blueAccent,
+                      size: 26,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  bottom: 160,
+                  left: 16,
+                  child: FloatingActionButton(
+                    onPressed: _showNearbyEVStations,
+                    heroTag: 'nearbyEvStation', 
+                    backgroundColor: Colors.white,
+                    shape: CircleBorder(),
+                    child: Icon(
+                      Icons.ev_station,
+                      color: Colors.black,
                       size: 26,
                     ),
                   ),
