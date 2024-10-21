@@ -16,6 +16,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 class SearchPlacePage extends StatefulWidget {
   final Function(Map<String, dynamic>) onAddToFavorites;
@@ -507,129 +508,147 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-  Future<void> _fetchPlaceSuggestions(String query) async {
-    print("Fetching place suggestions for query: $query");
+Future<void> _fetchPlaceSuggestions(String query) async {
+  print("Fetching place suggestions for query: $query");
 
-    if (_searchCache.containsKey(query)) {
-      suggestionsNotifier.value = _searchCache[query]!;
-      print("Loaded suggestions from cache");
+  // ตรวจสอบการแคชก่อน
+  if (_searchCache.containsKey(query)) {
+    suggestionsNotifier.value = _searchCache[query]!;
+    print("Loaded suggestions from cache");
+    return;
+  }
+
+  if (_currentPosition == null) {
+    print("Current position is null");
+    return;
+  }
+
+  // ใช้ Debounce เพื่อลดการเรียกใช้งานบ่อยครั้ง
+  if (_debounce?.isActive ?? false) _debounce!.cancel();
+  _debounce = Timer(const Duration(milliseconds: 500), () async {
+    // ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต
+    var connectivityResult = await Connectivity().checkConnectivity();
+    if (connectivityResult == ConnectivityResult.none) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตของคุณ')),
+      );
       return;
     }
 
-    if (_currentPosition == null) {
-      print("Current position is null");
-      // คุณอาจต้องการแจ้งให้ผู้ใช้เปิดการเข้าถึงตำแหน่ง
-      return;
+    try {
+      // ใช้ Future.wait() เพื่อดึงข้อมูลพร้อมกัน
+      final results = await Future.wait([
+        _fetchFirestorePlaces(query),
+        _fetchFirestoreEVStations(query),
+        _fetchGooglePlaceSuggestions(query),
+      ]);
+
+      // รวมผลลัพธ์ทั้งหมดเข้าด้วยกัน
+      List<Map<String, dynamic>> fetchedSuggestions = [
+        ...results[0], // Firestore 'places'
+        ...results[1], // Firestore 'ev_stations'
+        ...results[2], // Google Places
+      ];
+
+      // ประมวลผลคำแนะนำแบบขนาน
+      List<Map<String, dynamic>> processedSuggestions = await _processSuggestions(fetchedSuggestions);
+
+      // แคชผลลัพธ์และอัปเดต notifier
+      _searchCache[query] = processedSuggestions;
+      suggestionsNotifier.value = processedSuggestions;
+      print("Set suggestions and cached them successfully");
+    } catch (e) {
+      print('Error fetching suggestions: $e');
+      suggestionsNotifier.value = [];
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('เกิดข้อผิดพลาดในการดึงข้อมูล กรุณาลองใหม่อีกครั้ง')),
+      );
     }
+  });
+}
 
-    // ใช้ Debounce เพื่อลดการเรียกใช้งานบ่อยครั้ง
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), () async {
-      // ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต
-      var connectivityResult = await (Connectivity().checkConnectivity());
-      if (connectivityResult == ConnectivityResult.none) {
-        // แจ้งเตือนผู้ใช้ว่าไม่มีการเชื่อมต่ออินเทอร์เน็ต
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตของคุณ')),
-        );
-        return;
-      }
+// ฟังก์ชันสำหรับดึงข้อมูลจาก Firestore collection 'places'
+Future<List<Map<String, dynamic>>> _fetchFirestorePlaces(String query) async {
+  final firestorePlacesResults = await FirebaseFirestore.instance
+      .collection('places')
+      .where('name', isGreaterThanOrEqualTo: query)
+      .where('name', isLessThanOrEqualTo: query + '\uf8ff')
+      .orderBy('name')
+      .limit(10) // จำกัดผลลัพธ์สูงสุด 10 รายการ
+      .get();
 
-      try {
-        // โหลดข้อมูลจาก Firestore ครั้งเดียว
-        if (!_placesLoaded) {
-          await _loadPlacesFromFirestore();
-          _placesLoaded = true;
-          print("Loaded places from Firestore");
-        }
+  return firestorePlacesResults.docs.map((doc) {
+    final place = doc.data();
+    return {
+      'name': place['name'] ?? 'No name available',
+      'place_id': place['place_id'] ?? doc.id,
+      'source': 'firestore',
+      'lat': place['lat'],
+      'lng': place['lng'],
+      'type': place['type'] ?? 'unknown',
+      'address': place['address'] ?? 'No address available',
+      'image_url': place['image_url'] ?? '',
+      'description': place['name'] ?? 'No name available',
+    };
+  }).toList();
+}
 
-        // ค้นหาสถานที่จาก Firestore โดยตรง (จากคอลเล็กชัน 'places')
-        final firestorePlacesResults = await FirebaseFirestore.instance
-            .collection('places')
-            .where('name', isGreaterThanOrEqualTo: query)
-            .where('name', isLessThanOrEqualTo: query + '\uf8ff')
-            .get();
+// ฟังก์ชันสำหรับดึงข้อมูลจาก Firestore collection 'ev_stations'
+Future<List<Map<String, dynamic>>> _fetchFirestoreEVStations(String query) async {
+  final firestoreEVStationsResults = await FirebaseFirestore.instance
+      .collection('ev_stations')
+      .where('name', isGreaterThanOrEqualTo: query)
+      .where('name', isLessThanOrEqualTo: query + '\uf8ff')
+      .orderBy('name')
+      .limit(10) // จำกัดผลลัพธ์สูงสุด 10 รายการ
+      .get();
 
-        // **เพิ่มการค้นหาจากคอลเล็กชัน 'ev_stations'**
-        final firestoreEVStationsResults = await FirebaseFirestore.instance
-            .collection('ev_stations')
-            .where('name', isGreaterThanOrEqualTo: query)
-            .where('name', isLessThanOrEqualTo: query + '\uf8ff')
-            .get();
+  return firestoreEVStationsResults.docs.map((doc) {
+    final place = doc.data();
+    return {
+      'name': place['name'] ?? 'No name available',
+      'place_id': place['place_id'] ?? doc.id,
+      'source': 'firestore',
+      'lat': place['lat'],
+      'lng': place['lng'],
+      'type': 'ev_station',
+      'address': place['address'] ?? 'No address available',
+      'image_url': place['image_url'] ?? '',
+      'description': place['name'] ?? 'No name available',
+      'charging_type': place['charging_type'] ?? '',
+      'kw': place['kw'] ?? 0.0,
+    };
+  }).toList();
+}
 
-        // แมปผลลัพธ์จาก 'places'
-        List<Map<String, dynamic>> firestorePlacesSuggestions =
-            firestorePlacesResults.docs
-                .map((doc) {
-                  final place = doc.data();
-                  return {
-                    'name': place['name'] ?? 'No name available',
-                    'place_id': place['place_id'] ?? doc.id,
-                    'source': 'firestore',
-                    'lat': place['lat'],
-                    'lng': place['lng'],
-                    'type': place['type'] ?? 'unknown',
-                    'address': place['address'] ?? 'No address available',
-                    'image_url': place['image_url'] ?? '',
-                    'description': place['name'] ?? 'No name available',
-                  };
-                })
-                .toList()
-                .cast<Map<String, dynamic>>();
+Future<List<Map<String, dynamic>>> _fetchGooglePlaceSuggestions(String query) async {
+  int radius = 3000; // รัศมีเริ่มต้นที่ 3000 เมตร
+  List<Map<String, dynamic>> suggestions = [];
 
-        // **แมปผลลัพธ์จาก 'ev_stations'**
-        List<Map<String, dynamic>> firestoreEVStationsSuggestions =
-            firestoreEVStationsResults.docs
-                .map((doc) {
-                  final place = doc.data();
-                  return {
-                    'name': place['name'] ?? 'No name available',
-                    'place_id': place['place_id'] ?? doc.id,
-                    'source': 'firestore',
-                    'lat': place['lat'],
-                    'lng': place['lng'],
-                    'type': 'ev_station',
-                    'address': place['address'] ?? 'No address available',
-                    'image_url': place['image_url'] ?? '',
-                    'description': place['name'] ?? 'No name available',
-                    'charging_type': place['charging_type'] ?? '',
-                    'kw': place['kw'] ?? 0.0,
-                    'phone': place['phone'] ?? 'No phone available',
-                    'opening_hours':
-                        place['open_hours'] ?? 'No hours available',
-                  };
-                })
-                .toList()
-                .cast<Map<String, dynamic>>();
+  // ลองค้นหาหลายรอบด้วยการเพิ่มรัศมีหากไม่พบผลลัพธ์เพียงพอ
+  for (int attempt = 0; attempt < 3; attempt++) {
+    final googleApiUrl = Uri.https(
+      'maps.googleapis.com',
+      '/maps/api/place/autocomplete/json',
+      {
+        'input': query,
+        'key': _apiKey,
+        'components': 'country:th',
+        'language': 'th',
+        'location': '${_currentPosition!.latitude},${_currentPosition!.longitude}',
+        'radius': radius.toString(),
+      },
+    );
 
-        print(
-            "Fetched ${firestorePlacesSuggestions.length} suggestions from 'places' collection in Firestore");
-        print(
-            "Fetched ${firestoreEVStationsSuggestions.length} suggestions from 'ev_stations' collection in Firestore");
+    try {
+      final response = await http.get(googleApiUrl);
 
-        // ดึงข้อมูลจาก Google Places API
-        final googleApiUrl = Uri.https(
-          'maps.googleapis.com',
-          '/maps/api/place/autocomplete/json',
-          {
-            'input': query,
-            'key': _apiKey,
-            'components': 'country:th',
-            'language': 'th',
-            'location':
-                '${_currentPosition!.latitude},${_currentPosition!.longitude}',
-            'radius': '5000', // ระบุรัศมีในหน่วยเมตร (ปรับตามความเหมาะสม)
-          },
-        );
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(response.body);
+        final predictions = jsonResponse['predictions'] as List;
 
-        final googleResponse = await http.get(googleApiUrl);
-        List<Map<String, dynamic>> googleSuggestions = [];
-
-        if (googleResponse.statusCode == 200) {
-          final jsonResponse = json.decode(googleResponse.body);
-          final predictions = jsonResponse['predictions'] as List;
-
-          googleSuggestions = predictions.map((prediction) {
+        if (predictions.isNotEmpty) {
+          suggestions = predictions.map((prediction) {
             return {
               'description': prediction['description'],
               'place_id': prediction['place_id'],
@@ -637,78 +656,50 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
             };
           }).toList();
 
-          print(
-              "Fetched ${predictions.length} suggestions from Google Places API");
-        } else {
-          print(
-              "Google Places API error: ${googleResponse.statusCode} - ${googleResponse.body}");
+          // หากพบผลลัพธ์แล้ว ให้หยุดการค้นหา
+          break;
         }
-
-        // รวมผลลัพธ์จาก Firestore ('places' และ 'ev_stations') และ Google Places API
-        List<Map<String, dynamic>> fetchedSuggestions = [
-          ...firestorePlacesSuggestions,
-          ...firestoreEVStationsSuggestions,
-          ...googleSuggestions,
-        ];
-
-        // ประมวลผลคำแนะนำแบบขนานโดยใช้ Future.wait
-        List<Future<Map<String, dynamic>>> futures =
-            fetchedSuggestions.map((suggestion) async {
-          if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
-            double distance = _calculateDistance(
-              _currentPosition!.latitude,
-              _currentPosition!.longitude,
-              suggestion['lat'],
-              suggestion['lng'],
-            );
-            suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
-            return suggestion;
-          } else if (suggestion['source'] == 'google') {
-            final placeDetails =
-                await fetchPlaceDetails(suggestion['place_id']);
-            if (placeDetails.containsKey('lat') &&
-                placeDetails.containsKey('lng')) {
-              double distance = _calculateDistance(
-                _currentPosition!.latitude,
-                _currentPosition!.longitude,
-                placeDetails['lat'],
-                placeDetails['lng'],
-              );
-              suggestion['lat'] = placeDetails['lat'];
-              suggestion['lng'] = placeDetails['lng'];
-              suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
-              // เพิ่มฟิลด์อื่น ๆ ที่จำเป็นจาก Google Places API
-              suggestion['address'] =
-                  placeDetails['address'] ?? 'No address available';
-              suggestion['type'] = placeDetails['type'] ?? 'unknown';
-              suggestion['name'] = placeDetails['name'] ?? 'No name available';
-              suggestion['description'] =
-                  placeDetails['name'] ?? 'No name available';
-            }
-            return suggestion;
-          } else {
-            return suggestion;
-          }
-        }).toList();
-
-        List<Map<String, dynamic>> processedSuggestions =
-            await Future.wait(futures);
-
-        // แคชผลลัพธ์และอัปเดต notifier
-        print("Setting suggestions and caching them");
-        _searchCache[query] = processedSuggestions;
-        suggestionsNotifier.value = processedSuggestions;
-      } catch (e) {
-        print('Error fetching suggestions: $e');
-        suggestionsNotifier.value = [];
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  'เกิดข้อผิดพลาดในการดึงข้อมูลสถานที่ กรุณาลองใหม่อีกครั้ง')),
-        );
+      } else {
+        print("Google Places API error: ${response.statusCode}");
       }
-    });
+    } catch (e) {
+      print("Error fetching Google suggestions: $e");
+    }
+
+    // หากยังไม่พบผลลัพธ์เพียงพอ ให้เพิ่มรัศมี
+    radius += 3000; // เพิ่มรัศมีอีก 3000 เมตร
   }
+
+  return suggestions;
+}
+
+
+// ฟังก์ชันประมวลผลคำแนะนำเพิ่มเติม
+Future<List<Map<String, dynamic>>> _processSuggestions(List<Map<String, dynamic>> suggestions) async {
+  List<Future<Map<String, dynamic>>> futures = suggestions.map((suggestion) async {
+    if (suggestion.containsKey('lat') && suggestion.containsKey('lng')) {
+      double distance = _calculateDistance(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        suggestion['lat'],
+        suggestion['lng'],
+      );
+      suggestion['distance'] = distance.toStringAsFixed(2) + ' km';
+      return suggestion;
+    } else if (suggestion['source'] == 'google') {
+      final placeDetails = await fetchPlaceDetails(suggestion['place_id']);
+      if (placeDetails.containsKey('lat') && placeDetails.containsKey('lng')) {
+        suggestion.addAll(placeDetails);
+      }
+      return suggestion;
+    } else {
+      return suggestion;
+    }
+  }).toList();
+
+  return await Future.wait(futures);
+}
+
 
   void _showNearbyEVStations() {
     if (_currentPosition == null) {
@@ -1138,37 +1129,52 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
         final results = jsonResponse['results'] as List<dynamic>;
 
         if (results.isNotEmpty) {
+          // ใช้การประมวลผลแบบขนานด้วย Future.wait
+          List<Future<void>> futures = [];
+
           for (var result in results) {
-            double lat = result['geometry']['location']['lat'] ?? 0.0;
-            double lng = result['geometry']['location']['lng'] ?? 0.0;
+            futures.add(Future(() async {
+              double lat = result['geometry']['location']['lat'] ?? 0.0;
+              double lng = result['geometry']['location']['lng'] ?? 0.0;
 
-            if (lat != 0.0 && lng != 0.0) {
-              Map<String, dynamic> placeDetails =
-                  await _fetchEVChargingStationDetails(
-                      result['place_id'] ?? '');
+              if (lat != 0.0 && lng != 0.0) {
+                String placeName = result['name'] ?? 'Unknown';
+                if (placeName.toLowerCase().contains('charging') ||
+                    placeName.toLowerCase().contains('ev')) {
+                  Map<String, dynamic> place = {
+                    'name': result['name'] ?? 'Unknown',
+                    'address': result['formatted_address'] ??
+                        result['vicinity'] ??
+                        'No address available',
+                    'lat': lat,
+                    'lng': lng,
+                    'place_id': result['place_id'] ?? '',
+                    'type': 'electric_vehicle_charging_station',
+                    'rating': result['rating'] ?? 0.0,
+                    'user_ratings_total': result['user_ratings_total'] ?? 0,
+                    'opening_hours':
+                        result['opening_hours']?['open_now'] != null
+                            ? (result['opening_hours']['open_now']
+                                ? 'Open now'
+                                : 'Closed')
+                            : 'No data',
+                    'photo_references': result['photos'] != null
+                        ? result['photos']
+                            .map<String>(
+                                (photo) => photo['photo_reference'] as String)
+                            .toList()
+                        : [],
+                    'source': 'google',
+                  };
 
-              String placeName = result['name'] ?? 'Unknown';
-              if (placeName.toLowerCase().contains('charging') ||
-                  placeName.toLowerCase().contains('ev')) {
-                evChargingStations.add({
-                  'name': result['name'] ?? 'Unknown',
-                  'address':
-                      result['formatted_address'] ?? 'No address available',
-                  'lat': lat,
-                  'lng': lng,
-                  'place_id': result['place_id'] ?? '',
-                  'type': 'electric_vehicle_charging_station',
-                  'phone': placeDetails['phone'],
-                  'opening_hours': placeDetails['opening_hours'],
-                  'reviews': placeDetails['reviews'],
-                  'charging_type': placeDetails['charging_type'],
-                  'kw': placeDetails['kw'],
-                  'photo_references': placeDetails['photo_references'],
-                  'source': 'google',
-                });
+                  evChargingStations.add(place);
+                }
               }
-            }
+            }));
           }
+
+          // รอให้ทุก Future เสร็จสิ้น
+          await Future.wait(futures);
         }
       } else {
         print(
@@ -1220,35 +1226,50 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
           if (results.isEmpty) {
             print('No $type found in the area.');
           } else {
+            // ใช้การประมวลผลแบบขนานด้วย Future.wait
+            List<Future<void>> futures = [];
+
             for (var result in results) {
-              String address = result['formatted_address'] ??
-                  result['vicinity'] ??
-                  'No address available';
+              futures.add(Future(() async {
+                String address = result['vicinity'] ?? 'No address available';
 
-              double lat = result['geometry']['location']['lat'] ?? 0.0;
-              double lng = result['geometry']['location']['lng'] ?? 0.0;
+                double lat = result['geometry']['location']['lat'] ?? 0.0;
+                double lng = result['geometry']['location']['lng'] ?? 0.0;
 
-              if (lat != 0.0 && lng != 0.0) {
-                Map<String, dynamic> placeDetails =
-                    await fetchPlaceDetails(result['place_id'] ?? '');
+                if (lat != 0.0 && lng != 0.0) {
+                  // ดึงข้อมูลจาก result โดยตรงโดยไม่เรียก fetchPlaceDetails()
+                  Map<String, dynamic> place = {
+                    'name': result['name'] ?? 'Unknown',
+                    'address': address,
+                    'lat': lat,
+                    'lng': lng,
+                    'place_id': result['place_id'] ?? '',
+                    'type': type,
+                    'rating': result['rating'] ?? 0.0,
+                    'user_ratings_total': result['user_ratings_total'] ?? 0,
+                    'opening_hours':
+                        result['opening_hours']?['open_now'] != null
+                            ? (result['opening_hours']['open_now']
+                                ? 'Open now'
+                                : 'Closed')
+                            : 'No data',
+                    'photo_references': result['photos'] != null
+                        ? result['photos']
+                            .map<String>(
+                                (photo) => photo['photo_reference'] as String)
+                            .toList()
+                        : [],
+                    'source': 'google',
+                  };
 
-                allPlaces.add({
-                  'name': result['name'] ?? 'Unknown',
-                  'address': address,
-                  'lat': lat,
-                  'lng': lng,
-                  'place_id': result['place_id'] ?? '',
-                  'type': type,
-                  'phone': placeDetails['phone'],
-                  'opening_hours': placeDetails['opening_hours'],
-                  'reviews': placeDetails['reviews'],
-                  'photo_references': placeDetails['photo_references'] ?? [],
-                  'source': 'google',
-                });
-              } else {
-                print('Invalid coordinates for place: ${result['name']}');
-              }
+                  allPlaces.add(place);
+                } else {
+                  print('Invalid coordinates for place: ${result['name']}');
+                }
+              }));
             }
+
+            await Future.wait(futures);
           }
         } else {
           print(
@@ -1267,16 +1288,28 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
     });
   }
 
-  void _onMapCreated(gms.GoogleMapController controller) {
-    if (!_controllerCompleter.isCompleted) {
-      // เพิ่มการตรวจสอบเพื่อป้องกันการเรียก complete ซ้ำ
-      _controllerCompleter.complete(controller);
-    }
-    if (!_isLoadingLocation && _currentPosition != null) {
-      controller
-          .moveCamera(CameraUpdate.newLatLngZoom(_currentPosition!, 14.0));
-    }
+void _onMapCreated(gms.GoogleMapController controller) async {
+  if (!_controllerCompleter.isCompleted) {
+    // ป้องกันการเรียก complete ซ้ำ
+    _controllerCompleter.complete(controller);
   }
+
+  // โหลด Map Style JSON จาก assets
+  try {
+    String style = await rootBundle.loadString('assets/data/map_style.json');
+    await controller.setMapStyle(style); // ตั้งค่า Map Style
+    print('Map style set successfully');
+  } catch (e) {
+    print('Error loading map style: $e');
+  }
+
+  // ตรวจสอบว่าตำแหน่งปัจจุบันถูกโหลดแล้ว
+  if (!_isLoadingLocation && _currentPosition != null) {
+    controller.moveCamera(
+      CameraUpdate.newLatLngZoom(_currentPosition!, 14.0),
+    );
+  }
+}
 
   BitmapDescriptor? _getIconForType(String type) {
     switch (type) {
@@ -1670,7 +1703,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                       ),
                       SizedBox(height: 12),
 
-                      
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
@@ -2478,7 +2510,6 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                       ),
                       SizedBox(height: 12),
 
-                      
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
@@ -3053,6 +3084,8 @@ class _SearchPlacePageState extends State<SearchPlacePage> {
                   polylines: _polylines,
                   zoomControlsEnabled: false,
                   myLocationEnabled: true,
+                  buildingsEnabled: false, 
+                  mapToolbarEnabled: false,
                 ),
                 Positioned(
                   top: 80,
